@@ -1,0 +1,19 @@
+[Unit]
+Description=translate-direct (Direct API book translation consumer, D-scheme)
+After=network.target network-online.target translate-web.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/translate/web
+ExecStart=/root/translate/book/.venv/bin/python /root/translate/web/translate_direct.py
+Restart=on-failure
+RestartSec=5
+# 直连 API 轻量守护，~100-200MB；给足余量防 OOM
+MemoryMax=1024M
+Environment=PYTHONUNBUFFERED=1
+Environment=DIRECT_REASONING=none
+
+[Install]
+WantedBy=multi-user.target
