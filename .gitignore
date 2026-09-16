@@ -1,0 +1,40 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# ===== 虚拟环境 =====
+.venv/
+venv/
+env/
+
+# ===== 翻译工作区（运行数据，不入库）=====
+# chunk/译文/成品/任务元数据/回收站全部是生成物
+work/
+!work/.gitkeep
+
+# ===== 凭据与密钥 =====
+.env
+*.env
+*.cred
+*.key
+*.pem
+id_rsa*
+secrets*
+
+# ===== 日志与临时 =====
+*.log
+*.tmp
+*.bak
+.DS_Store
+
+# ===== 测试产物（book/ 上游自管理）=====
+book/tests/.artifacts/
+
+# ===== 编辑器 =====
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>翻译文库 · TRANSLATION ARCHIVE</title>
+<style>
+:root{
+  --paper:#FAF7F2; --paper-warm:#F3EFE5; --ink:#1C1B18; --ink-soft:#6B675F;
+  --line:#E5E0D5; --accent:#A16207; --ok:#16a34a; --busy:#2563eb; --warn:#d97706;
+  --font-display:"Noto Serif SC","Songti SC",Georgia,serif;
+  --font-sans:-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono","SF Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --paper:#161513; --paper-warm:#1C1A17; --ink:#E8E5DF; --ink-soft:#9A958C;
+    --line:#2A2824; --accent:#E3B341; --ok:#4ade80; --busy:#60a5fa; --warn:#fbbf24;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--paper);color:var(--ink);font-family:var(--font-sans);font-size:15px;line-height:1.6}
+a{color:inherit;text-decoration:none}
+.mono{font-family:var(--font-mono)}
+.kicker{font-family:var(--font-mono);font-size:.68rem;text-transform:uppercase;letter-spacing:.14em;color:var(--ink-soft)}
+
+/* ===== 布局 ===== */
+.app{display:flex;min-height:100vh}
+.sidebar{
+  width:264px;flex-shrink:0;border-right:1px solid var(--line);background:var(--paper-warm);
+  display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto;
+  transition:width .22s ease,border-color .22s ease;
+}
+.sidebar>*{transition:opacity .15s ease}
+.app.collapsed .sidebar{width:0;overflow:hidden;border-right:none}
+.app.collapsed .sidebar>*{opacity:0;pointer-events:none}
+.brand{padding:22px 20px 14px;border-bottom:1px solid var(--line);cursor:pointer;transition:background .15s}
+.brand:hover{background:rgba(161,98,7,.06)}
+.brand h1{font-family:var(--font-display);font-size:20px;font-weight:600;letter-spacing:-.01em}
+.brand .sub{margin-top:3px}
+.nav{padding:14px 10px;flex:1}
+.upload-card{border:1px solid var(--line);border-radius:6px;padding:10px;margin:0 10px 0 10px;margin-top:10px;background:var(--paper)}
+.upload-card .up-input{width:100%;box-sizing:border-box;margin:4px 0;padding:6px 8px;border:1px solid var(--line);border-radius:4px;background:var(--paper-warm);color:var(--ink);font-size:12px}
+.upload-card .up-btn{width:100%;margin-top:6px;padding:7px 0;border:1px solid var(--accent);border-radius:4px;background:transparent;color:var(--accent);font-family:var(--font-mono);font-size:12px;cursor:pointer}
+.upload-card .up-btn:hover{background:var(--accent);color:#fff}
+#job-list .job-item{padding:5px 0;border-bottom:1px dashed var(--line);font-size:11px;line-height:1.5}
+#job-list .job-item .st{font-family:var(--font-mono);font-size:10px;letter-spacing:.05em}
+.st-done{color:#2e7d32}.st-ready{color:#1565c0}.st-converting,.st-translating{color:#e65100}
+.st-failed{color:#c62828}.st-cancelled{color:var(--ink-soft)}.st-pending,.st-merging{color:#6a1b9a}
+.nav-head{display:flex;justify-content:space-between;align-items:baseline;padding:0 10px 8px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.nav-head .kicker{color:var(--accent);font-weight:700}
+.nav-head .kicker.title{color:var(--accent);font-weight:700}
+.sel-tools{display:flex;align-items:center;gap:6px;padding:2px 10px 8px;font-family:var(--font-mono);font-size:.62rem;color:var(--ink-soft)}
+.sel-tools label{display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+.sel-tools input[type=checkbox]{accent-color:var(--accent)}
+.book-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:4px;cursor:pointer;font-size:.86rem}
+.book-item .chk{accent-color:var(--accent);cursor:pointer;flex-shrink:0}
+.book-item:hover{background:var(--paper)}
+.book-item.active{background:var(--paper);box-shadow:inset 2px 0 0 var(--accent)}
+.mini-btn{font-family:var(--font-mono);font-size:.62rem;padding:2px 8px;border:1px solid var(--line);border-radius:4px;background:transparent;color:var(--ink-soft);cursor:pointer}
+.mini-btn:hover{border-color:var(--accent);color:var(--accent)}
+.mini-btn.danger:hover{border-color:#c62828;color:#c62828}
+.mini-btn:disabled{opacity:.4;cursor:not-allowed}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dot.done{background:var(--ok)} .dot.converting{background:var(--busy)}
+.dot.translating{background:var(--warn)} .dot.empty,.dot.converted{background:var(--ink-soft)}
+.book-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.foot{padding:14px 20px;border-top:1px solid var(--line);font-size:.66rem;color:var(--ink-soft)}
+
+/* ===== 主区 ===== */
+.main{flex:1;padding:0;min-width:0}
+.topbar{display:flex;align-items:baseline;gap:12px;padding:16px 32px;border-bottom:1px solid var(--line)}
+.side-toggle{padding:3px 10px;border:1px solid var(--line);border-radius:4px;background:var(--paper-warm);color:var(--ink-soft);cursor:pointer;font-size:.85rem;line-height:1.4;transition:all .15s;align-self:center}
+.side-toggle:hover{border-color:var(--accent);color:var(--accent)}
+.topbar h2{font-family:var(--font-display);font-size:22px;font-weight:600;letter-spacing:-.01em}
+.crumb{color:var(--ink-soft);cursor:pointer}
+.crumb:hover{color:var(--accent)}
+.search-box{display:flex;gap:6px;align-items:center}
+.search-box input{padding:5px 10px;border:1px solid var(--line);border-radius:4px;background:var(--paper-warm);color:var(--ink);font-size:.78rem;width:170px;font-family:inherit}
+.search-box input:focus{outline:none;border-color:var(--accent)}
+.search-box select{padding:5px 6px;border:1px solid var(--line);border-radius:4px;background:var(--paper-warm);color:var(--ink-soft);font-size:.72rem;font-family:var(--font-mono);cursor:pointer}
+.search-hit{padding:6px 10px;border:1px solid var(--line);border-radius:4px;margin-bottom:4px;cursor:pointer;font-size:.8rem;background:var(--paper-warm);display:flex;gap:10px;align-items:baseline}
+.search-hit:hover{border-color:var(--accent)}
+.search-hit .mono{white-space:nowrap;flex-shrink:0}
+.content{padding:24px 32px 60px;max-width:1200px}
+
+/* ===== 书库网格 ===== */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-top:8px}
+.card{
+  border:1px solid var(--line);border-radius:6px;background:var(--paper-warm);overflow:hidden;
+  display:flex;flex-direction:column;cursor:pointer;transition:border-color .15s,transform .15s;
+}
+.card:hover{border-color:var(--accent);transform:translateY(-2px)}
+.card-body{padding:16px 18px;flex:1}
+.card-title{font-family:var(--font-display);font-size:1.02rem;font-weight:600;line-height:1.35}
+.card-author{font-size:.78rem;color:var(--ink-soft);margin-top:4px}
+.card-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-family:var(--font-mono);font-size:.66rem;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.06em}
+.card-foot{display:flex;justify-content:space-between;align-items:center;padding:10px 18px;border-top:1px solid var(--line);font-family:var(--font-mono);font-size:.66rem;color:var(--ink-soft)}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:20px;font-family:var(--font-mono);font-size:.62rem;text-transform:uppercase;letter-spacing:.08em;border:1px solid var(--line)}
+.badge.done{color:var(--ok);border-color:var(--ok)} .badge.converting{color:var(--busy);border-color:var(--busy)}
+.badge.translating{color:var(--warn);border-color:var(--warn)} .badge.empty,.badge.converted{color:var(--ink-soft)}
+.dl-btn{font-family:var(--font-mono);font-size:.66rem;padding:3px 10px;border:1px solid var(--line);border-radius:4px;color:var(--ink-soft);cursor:pointer;background:transparent;transition:all .15s}
+.dl-btn:hover{color:var(--accent);border-color:var(--accent)}
+
+/* ===== 详情 tabs ===== */
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:20px;flex-wrap:wrap}
+.tab{padding:8px 16px;font-family:var(--font-mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-soft);cursor:pointer;border-bottom:2px solid transparent}
+.tab:hover{color:var(--ink)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.panel{display:none}
+.panel.active{display:block}
+.dl-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:8px 0}
+.dl-cell{display:flex;flex-direction:column;gap:6px;padding:12px 16px;border:1px solid var(--line);border-radius:6px;min-width:120px}
+.dl-cell .fmt{font-family:var(--font-display);font-size:1.1rem;font-weight:600}
+.dl-cell .sz{font-family:var(--font-mono);font-size:.66rem;color:var(--ink-soft)}
+.doc-preview{width:100%;height:72vh;border:1px solid var(--line);border-radius:6px;background:white}
+.markdown{background:var(--paper-warm);border:1px solid var(--line);border-radius:6px;padding:24px 28px;max-width:860px}
+.markdown h1,.markdown h2,.markdown h3{font-family:var(--font-display);margin:1em 0 .5em;line-height:1.3}
+.markdown h1{font-size:1.5rem}.markdown h2{font-size:1.25rem}.markdown h3{font-size:1.1rem}
+.markdown p{margin:.6em 0}.markdown ul,.markdown ol{margin:.6em 0;padding-left:1.4em}
+.markdown blockquote{border-left:2px solid var(--accent);padding-left:1em;color:var(--ink-soft);margin:.8em 0}
+.markdown img{max-width:100%;border-radius:4px}.markdown pre{background:var(--paper);padding:12px;border-radius:6px;overflow-x:auto;font-family:var(--font-mono);font-size:.8rem}
+.markdown code{font-family:var(--font-mono);font-size:.85em}
+
+/* ===== 对照阅读 ===== */
+.compare{display:flex;gap:14px;align-items:flex-start}
+.compare-pane{flex:1;min-width:0;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.compare-pane .pane-head{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--paper-warm);font-family:var(--font-mono);font-size:.66rem;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-soft)}
+.compare-pane pre{padding:14px 16px;white-space:pre-wrap;word-break:break-word;font-family:var(--font-sans);font-size:.86rem;margin:0}
+.cmp-body{max-height:72vh;overflow-y:auto}
+.cmp-body .markdown{border:none;padding:14px 16px;background:transparent}
+.cmp-body .markdown p{margin:.55em 0}
+.chunk-nav{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.chunk-nav select,.chunk-nav button{padding:5px 12px;border:1px solid var(--line);border-radius:4px;background:var(--paper-warm);color:var(--ink);font-family:var(--font-mono);font-size:.75rem;cursor:pointer}
+.chunk-nav button:hover{border-color:var(--accent);color:var(--accent)}
+.chunk-nav .kicker{flex:1}
+
+/* ===== 元数据 ===== */
+.meta-table{width:100%;border-collapse:collapse;font-size:.84rem}
+.meta-table th,.meta-table td{padding:9px 14px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.meta-table th{font-family:var(--font-mono);font-size:.66rem;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-soft);width:200px}
+.meta-table code{font-family:var(--font-mono);font-size:.78rem;word-break:break-all}
+.img-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.img-grid img{width:100%;border:1px solid var(--line);border-radius:6px;cursor:zoom-in}
+/* ===== 术语表 ===== */
+.gloss-table th{width:auto}
+.gloss-table td{padding:4px 6px}
+.g-in{width:100%;min-width:70px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:5px 7px;font-size:.8rem;font-family:inherit;box-sizing:border-box}
+.g-in:focus{outline:none;border-color:var(--accent)}
+.g-del{background:none;border:none;color:#c62828;cursor:pointer;font-size:.9rem;padding:2px 6px}
+.g-del:hover{opacity:.7}
+.empty-hint{color:var(--ink-soft);font-size:.85rem;padding:30px 0;text-align:center;font-family:var(--font-mono)}
+
+/* ===== 模态框（上传二级界面） ===== */
+.modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:50;backdrop-filter:blur(2px)}
+.modal-card{width:min(420px,92vw);background:var(--paper);border:1px solid var(--line);border-radius:8px;box-shadow:0 16px 48px rgba(0,0,0,.22)}
+.modal-head{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line)}
+.modal-body{padding:16px 18px}
+.modal-label{display:block;font-family:var(--font-mono);font-size:.62rem;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-soft);margin:12px 0 4px}
+
+/* ===== 回收站 ===== */
+.trash-sec{margin-bottom:8px}
+.trash-item{display:flex;align-items:center;gap:6px;padding:5px 0;font-size:11px;border-bottom:1px dashed var(--line);line-height:1.5}
+.trash-item .t-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trash-item .t-meta{font-family:var(--font-mono);font-size:9px;color:var(--ink-soft)}
+
+/* ===== 任务详情展开 ===== */
+.job-item{cursor:pointer}
+.job-item .j-main{display:flex;align-items:center;gap:6px}
+.job-item .j-expand{margin-left:auto;color:var(--ink-soft);font-size:10px}
+.job-item .j-detail{margin-top:6px;padding:8px 10px;background:var(--paper-warm);border:1px solid var(--line);border-radius:4px;font-family:var(--font-mono);font-size:10px;line-height:1.7;color:var(--ink-soft);white-space:pre-wrap;word-break:break-all}
+.job-item .j-detail .err{color:#c62828}
+.job-item .j-detail b{color:var(--ink)}
+
+@media(max-width:860px){.sidebar{display:none}.compare{flex-direction:column}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand" onclick="showLibrary()" title="返回主页">
+      <h1>翻译文库</h1>
+      <p class="sub kicker">TRANSLATION ARCHIVE</p>
+    </div>
+    <nav class="nav">
+      <div class="nav-head">
+        <span class="kicker">藏书 · BOOKS</span>
+        <span id="nav-count" class="kicker">0</span>
+      </div>
+      <div class="sel-tools">
+        <label><input type="checkbox" id="sel-all-books" onchange="toggleSelAllBooks()"> 全选</label>
+        <button class="mini-btn danger" id="btn-del-books" onclick="delSelectedBooks()" disabled>删除所选</button>
+        <span id="sel-count" style="margin-left:auto">0</span>
+      </div>
+      <div id="book-nav"></div>
+    </nav>
+    <div class="upload-card" style="margin-top:10px">
+      <button class="up-btn" onclick="openUploadModal()">＋ 上传新书</button>
+    </div>
+    <div class="upload-card" id="jobs-card">
+      <div class="nav-head" style="cursor:pointer;margin-bottom:0;border-bottom:none;padding-bottom:0" onclick="toggleJobs()">
+        <span class="kicker" id="jobs-collapse">▾ 任务 · JOBS</span>
+        <button onclick="event.stopPropagation();loadJobs()" style="margin-left:auto;border:none;background:none;color:var(--ink-soft);cursor:pointer;font-size:11px">↻</button>
+      </div>
+      <div id="jobs-body">
+        <div class="sel-tools" style="padding-top:6px">
+          <label><input type="checkbox" id="sel-all-jobs" onchange="toggleSelAllJobs()"> 全选</label>
+          <button class="mini-btn danger" id="btn-del-jobs" onclick="delSelectedJobs()" disabled>删除所选</button>
+          <span id="sel-jobs-count" style="margin-left:auto">0</span>
+        </div>
+        <div id="job-list" class="kicker" style="color:var(--ink-soft)">无任务</div>
+      </div>
+    </div>
+    <div class="upload-card" id="trash-card">
+      <div class="nav-head" style="cursor:pointer;margin-bottom:0;border-bottom:none;padding-bottom:0" onclick="toggleTrash()">
+        <span class="kicker" id="trash-collapse">▸ 回收站 · TRASH</span>
+        <span id="trash-count" class="kicker">0</span>
+      </div>
+      <div id="trash-body" style="display:none;padding-top:6px">
+        <div id="trash-books" class="trash-sec"></div>
+        <div id="trash-jobs" class="trash-sec"></div>
+        <button class="mini-btn danger" style="width:100%;margin-top:6px" onclick="emptyTrash()">清空回收站</button>
+      </div>
+    </div>
+    <div class="foot">
+      <p>POWERED BY translate-book</p>
+      <p id="foot-meta" style="margin-top:4px">—</p>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <button class="side-toggle" id="side-toggle-btn" onclick="toggleSidebar()" title="收起/展开侧栏">☰</button>
+      <span class="crumb" id="crumb-home" onclick="showLibrary()">文库</span>
+      <span id="crumb-sep" style="display:none;color:var(--ink-soft)">/</span>
+      <span id="crumb-book" style="display:none"></span>
+      <h2 id="page-title" style="flex:1"></h2>
+      <div class="search-box">
+        <input id="search-input" placeholder="搜索译文…" onkeydown="if(event.key==='Enter')doSearch()">
+        <select id="search-scope" onchange="if($('search-input').value.trim())doSearch()">
+          <option value="trans">译文</option>
+          <option value="src">原文</option>
+          <option value="all">全部</option>
+        </select>
+      </div>
+    </div>
+    <div class="content" id="content">
+      <div class="empty-hint">加载中…</div>
+    </div>
+  </main>
+</div>
+
+<!-- 上传模态框（二级界面） -->
+<div id="upload-modal" class="modal-mask" style="display:none" onclick="if(event.target===this)closeUploadModal()">
+  <div class="modal-card">
+    <div class="modal-head">
+      <span class="kicker">上传新书 · UPLOAD</span>
+      <button class="mini-btn" onclick="closeUploadModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <label class="modal-label">文件 · FILE（PDF / DOCX / EPUB）</label>
+      <input type="file" id="up-file" accept=".pdf,.docx,.epub" class="up-input">
+      <label class="modal-label">书名 · TITLE（可选）</label>
+      <input type="text" id="up-title" placeholder="默认使用文件名" class="up-input">
+      <label class="modal-label">目标语言 · TARGET LANG</label>
+      <select id="up-lang" class="up-input">
+        <option value="zh">中文</option>
+        <option value="en">English</option>
+        <option value="ja">日本語</option>
+      </select>
+      <button onclick="doUpload()" class="up-btn">开始上传并转换</button>
+      <div id="up-msg" class="kicker" style="margin-top:8px;color:var(--accent)"></div>
+    </div>
+  </div>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

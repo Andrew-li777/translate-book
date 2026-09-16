@@ -1,0 +1,15 @@
+[Unit]
+Description=translate-web (FastAPI - Translation Archive viewer)
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/translate/web
+ExecStart=/root/translate/book/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8788 --log-level info
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
