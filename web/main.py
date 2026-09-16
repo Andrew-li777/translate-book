@@ -18,10 +18,21 @@ from fastapi.staticfiles import StaticFiles
 import books
 import config
 import jobs
+from auth import AuthMiddleware
+from guest_rules import guest_read_allowed
 
 app = FastAPI(title="Translate Book Web", version="0.1.0")
 _STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
+
+# 访客模式：游客只读白名单；管理员凭据校验（bcrypt，与 Caddy basicauth 同 hash）
+app.add_middleware(
+    AuthMiddleware,
+    admin_user="translate",
+    admin_hash="$2a$14$gRD523QHpDwAsBr6YK2yJuDyBtiOlHbpcNcVAInF8JxbGbKQ2SKLu",
+    is_read_allowed=guest_read_allowed,
+    rate_limits=[("/api/search", 10, 60)],  # 游客全文搜索限频 10次/分/IP
+)
 
 # 前端可安全读取/下载的文本扩展
 _TEXT_MIME = {

@@ -173,6 +173,11 @@ a{color:inherit;text-decoration:none}
 .job-item .j-detail b{color:var(--ink)}
 
 @media(max-width:860px){.sidebar{display:none}.compare{flex-direction:column}}
+/* ===== 登录/游客状态 ===== */
+.auth-box{display:flex;align-items:center;gap:8px;margin-left:4px}
+.auth-guest{color:var(--ink-soft);cursor:pointer;border:1px dashed var(--line);padding:3px 8px;border-radius:4px}
+.auth-guest:hover{border-color:var(--accent);color:var(--accent)}
+.auth-admin{color:var(--ok);border:1px solid var(--ok);padding:3px 8px;border-radius:4px}
 </style>
 </head>
 <body>
@@ -243,6 +248,11 @@ a{color:inherit;text-decoration:none}
           <option value="all">全部</option>
         </select>
       </div>
+      <div class="auth-box">
+        <span id="auth-badge" class="kicker auth-guest" onclick="openLoginModal()" title="点击登录">游客 · GUEST</span>
+        <button id="auth-btn" class="mini-btn" onclick="openLoginModal()" style="display:none">登录</button>
+        <button id="logout-btn" class="mini-btn" onclick="logout()" style="display:none">退出</button>
+      </div>
     </div>
     <div class="content" id="content">
       <div class="empty-hint">加载中…</div>
@@ -250,6 +260,24 @@ a{color:inherit;text-decoration:none}
   </main>
 </div>
 
+<!-- 登录模态框 -->
+<div id="login-modal" class="modal-mask" style="display:none" onclick="if(event.target===this)closeLoginModal()">
+  <div class="modal-card">
+    <div class="modal-head">
+      <span class="kicker">登录 · SIGN IN</span>
+      <button class="mini-btn" onclick="closeLoginModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="kicker" style="color:var(--ink-soft);margin-bottom:10px">游客仅可浏览阅读，上传/翻译/管理等操作需登录。</p>
+      <label class="modal-label">账号 · USER</label>
+      <input type="text" id="login-user" class="up-input" placeholder="账号" autocomplete="username">
+      <label class="modal-label">密码 · PASSWORD</label>
+      <input type="password" id="login-pass" class="up-input" placeholder="密码" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+      <button onclick="doLogin()" class="up-btn">登录</button>
+      <div id="login-msg" class="kicker" style="margin-top:8px;color:var(--danger)"></div>
+    </div>
+  </div>
+</div>
 <!-- 上传模态框（二级界面） -->
 <div id="upload-modal" class="modal-mask" style="display:none" onclick="if(event.target===this)closeUploadModal()">
   <div class="modal-card">

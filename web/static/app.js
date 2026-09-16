@@ -5,7 +5,60 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt = n => n >= 1048576 ? (n/1048576).toFixed(1)+"MB" : n >= 1024 ? Math.round(n/1024)+"KB" : n+"B";
 
-async function api(url){ const r = await fetch(url); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+/* ===== 认证（游客/管理员） ===== */
+const AUTH_KEY = 'tw-basic-auth';
+function getAuth(){ try{ return localStorage.getItem(AUTH_KEY) || ''; }catch(e){ return ''; } }
+function setAuth(v){ try{ v ? localStorage.setItem(AUTH_KEY, v) : localStorage.removeItem(AUTH_KEY); }catch(e){} }
+function isAdmin(){ return !!getAuth(); }
+function _authHeaders(h){ const a = getAuth(); if(a){ h = h || {}; h['Authorization'] = 'Basic ' + a; } return h || {}; }
+function updateAuthBadge(){
+  const badge = $('auth-badge'), btn = $('auth-btn'), lo = $('logout-btn');
+  if(isAdmin()){
+    badge.textContent = '已登录 · ADMIN'; badge.className = 'kicker auth-admin'; badge.onclick = null; badge.title = '';
+    if(btn) btn.style.display = 'none';
+    if(lo) lo.style.display = 'inline-block';
+  } else {
+    badge.textContent = '游客 · GUEST'; badge.className = 'kicker auth-guest'; badge.onclick = openLoginModal; badge.title = '点击登录';
+    if(btn) btn.style.display = 'inline-block';
+    if(lo) lo.style.display = 'none';
+  }
+}
+function openLoginModal(){ $('login-msg').textContent = ''; $('login-modal').style.display = 'flex'; $('login-user').focus(); }
+function closeLoginModal(){ $('login-modal').style.display = 'none'; }
+async function doLogin(){
+  const u = $('login-user').value.trim(), p = $('login-pass').value;
+  if(!u || !p){ $('login-msg').textContent = '请输入账号和密码'; return; }
+  const token = btoa(u + ':' + p);
+  try{
+    const r = await fetch('/api/jobs', { headers: { 'Authorization': 'Basic ' + token } });
+    if(r.ok){ setAuth(token); updateAuthBadge(); closeLoginModal(); $('login-pass').value=''; location.reload(); }
+    else { $('login-msg').textContent = r.status === 401 ? '账号或密码错误' : '登录失败(' + r.status + ')'; }
+  }catch(e){ $('login-msg').textContent = '网络错误'; }
+}
+function logout(){ setAuth(''); updateAuthBadge(); location.reload(); }
+function requireLogin(){
+  if(isAdmin()) return true;
+  openLoginModal(); return false;
+}
+
+async function api(url, opts){
+  opts = opts || {};
+  opts.headers = _authHeaders(opts.headers);
+  const r = await fetch(url, opts);
+  if(r.status === 401){ setAuth(''); updateAuthBadge(); openLoginModal(); throw new Error('登录已失效，请重新登录'); }
+  if(r.status === 403){ openLoginModal(); throw new Error('游客只读：此操作需登录'); }
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+/* 带认证头的裸 fetch（写操作用）；403/401 时弹登录 */
+async function authFetch(url, opts){
+  opts = opts || {};
+  opts.headers = _authHeaders(opts.headers);
+  const r = await fetch(url, opts);
+  if(r.status === 401){ setAuth(''); updateAuthBadge(); openLoginModal(); }
+  else if(r.status === 403){ openLoginModal(); }
+  return r;
+}
 function statusInfo(s){
   if(s==='done') return {t:'已完成',c:'done'};
   if(s==='converting') return {t:'转换中',c:'converting'};
@@ -299,7 +352,7 @@ async function saveGlossary(name){
   }
   if(!terms.length){ alert('没有可保存的术语'); return; }
   try{
-    const r = await fetch(`/api/books/${name}/glossary`, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({terms})});
+    const r = await authFetch(`/api/books/${name}/glossary`, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({terms})});
     const d = await r.json().catch(()=>({}));
     if(!r.ok){ alert((d.detail||('HTTP '+r.status))); return; }
     alert(`已保存 ${d.terms_count} 条术语 · 将重译 ${d.affected_chunks} 块`);
@@ -333,7 +386,7 @@ async function doUpload(){
   fd.append('target_lang', $('up-lang').value);
   msg.textContent = '上传中…';
   try{
-    const r = await fetch('/api/upload', {method:'POST', body:fd});
+    const r = await authFetch('/api/upload', {method:'POST', body:fd});
     const d = await r.json().catch(()=>({}));
     if(!r.ok){ msg.textContent = (d.detail||('HTTP '+r.status)); return; }
     msg.textContent = '已提交任务 ' + (d.job?d.job.id:'');
@@ -375,7 +428,7 @@ function renderJobs(jobs){
 }
 async function cancelJob(id){
   if(!confirm('取消任务 '+id+'？')) return;
-  try{ await fetch('/api/jobs/'+id+'/cancel', {method:'POST'}); loadJobs(); }catch(e){}
+  try{ await authFetch('/api/jobs/'+id+'/cancel', {method:'POST'}); loadJobs(); }catch(e){}
 }
 function toggleJobDetail(el){
   const d = el.querySelector('.j-detail');
@@ -446,7 +499,7 @@ async function delSelectedBooks(){
   let ok=0, fail=[];
   for(const n of names){
     try{
-      const r = await fetch(`/api/books/${encodeURIComponent(n)}/trash`, {method:'POST'});
+      const r = await authFetch(`/api/books/${encodeURIComponent(n)}/trash`, {method:'POST'});
       if(r.ok) ok++; else { const d = await r.json().catch(()=>({})); fail.push(`${n}：${d.detail||r.status}`); }
     }catch(e){ fail.push(n); }
   }
@@ -462,7 +515,7 @@ async function delSelectedJobs(){
   let ok=0, fail=[];
   for(const id of ids){
     try{
-      const r = await fetch(`/api/jobs/${id}/trash`, {method:'POST'});
+      const r = await authFetch(`/api/jobs/${id}/trash`, {method:'POST'});
       if(r.ok) ok++; else { const d = await r.json().catch(()=>({})); fail.push(`${id}：${d.detail||r.status}`); }
     }catch(e){ fail.push(id); }
   }
@@ -510,19 +563,19 @@ async function loadTrash(){
     : '<div class="kicker" style="margin-bottom:2px">任务 · 空</div>';
 }
 async function restoreBook(name){
-  try{ const r = await fetch(`/api/trash/books/${encodeURIComponent(name)}/restore`, {method:'POST'});
+  try{ const r = await authFetch(`/api/trash/books/${encodeURIComponent(name)}/restore`, {method:'POST'});
     if(r.ok){ loadTrash(); loadLibrary(); } else { const d = await r.json().catch(()=>({})); alert(d.detail||'恢复失败'); }
   }catch(e){ alert('恢复失败'); }
 }
 async function restoreJob(id){
-  try{ const r = await fetch(`/api/trash/jobs/${id}/restore`, {method:'POST'});
+  try{ const r = await authFetch(`/api/trash/jobs/${id}/restore`, {method:'POST'});
     if(r.ok){ loadTrash(); loadJobs(); } else { const d = await r.json().catch(()=>({})); alert(d.detail||'恢复失败'); }
   }catch(e){ alert('恢复失败'); }
 }
 async function emptyTrash(){
   if(!confirm('清空回收站？此操作不可恢复！')) return;
-  await fetch('/api/trash/books/empty', {method:'POST'}).catch(()=>{});
-  await fetch('/api/trash/jobs/empty', {method:'POST'}).catch(()=>{});
+  await authFetch('/api/trash/books/empty', {method:'POST'}).catch(()=>{});
+  await authFetch('/api/trash/jobs/empty', {method:'POST'}).catch(()=>{});
   loadTrash();
 }
 
@@ -535,6 +588,7 @@ function toggleSidebar(){
 }
 
 /* ===== 启动 ===== */
+updateAuthBadge();
 loadLibrary();
 loadJobs();
 loadTrash();
