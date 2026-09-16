@@ -109,7 +109,10 @@ function renderLibrary(){
   window.scrollTo(0,0);
 }
 function showLibrary(){ CURRENT=null; $('crumb-book').style.display='none'; $('crumb-sep').style.display='none'; $('page-title').textContent=''; renderNav(); renderLibrary(); }
-function dlFmt(name, ext){ window.location = `/api/books/${name}/download/book.${ext}`; }
+function dlFmt(name, ext){
+  if(!isAdmin()){ openLoginModal(); return; }
+  window.location = `/api/books/${name}/download/book.${ext}`;
+}
 
 /* ===== P5: 全文搜索 ===== */
 async function doSearch(){
@@ -335,6 +338,7 @@ function addGlossRow(){
   tb.insertAdjacentHTML('beforeend', glossRowHtml(null));
 }
 async function saveGlossary(name){
+  if(!requireLogin()) return;
   const rows = [...document.querySelectorAll('#gloss-body tr')];
   const terms = [];
   for(const tr of rows){
@@ -427,6 +431,7 @@ function renderJobs(jobs){
   updateSelUI();
 }
 async function cancelJob(id){
+  if(!requireLogin()) return;
   if(!confirm('取消任务 '+id+'？')) return;
   try{ await authFetch('/api/jobs/'+id+'/cancel', {method:'POST'}); loadJobs(); }catch(e){}
 }
@@ -493,6 +498,7 @@ function updateSelUI(){
   const ja = $('sel-all-jobs'); if(ja){ const n=(window._JOBS||[]).length; ja.checked = n>0 && SEL_JOBS.size===n; ja.indeterminate = SEL_JOBS.size>0 && SEL_JOBS.size<n; }
 }
 async function delSelectedBooks(){
+  if(!requireLogin()) return;
   const names = [...SEL_BOOKS];
   if(!names.length) return;
   if(!confirm(`将删除所选 ${names.length} 本书（移入回收站，可恢复）？`)) return;
@@ -509,6 +515,7 @@ async function delSelectedBooks(){
   loadLibrary(); loadTrash();
 }
 async function delSelectedJobs(){
+  if(!requireLogin()) return;
   const ids = [...SEL_JOBS];
   if(!ids.length) return;
   if(!confirm(`将删除所选 ${ids.length} 个任务（移入回收站，可恢复）？`)) return;
@@ -526,7 +533,7 @@ async function delSelectedJobs(){
 }
 
 /* ===== 上传模态框 ===== */
-function openUploadModal(){ $('upload-modal').style.display='flex'; }
+function openUploadModal(){ if(!requireLogin()) return; $('upload-modal').style.display='flex'; }
 function closeUploadModal(){ $('upload-modal').style.display='none'; $('up-msg').textContent=''; }
 
 /* ===== 折叠 ===== */
@@ -573,6 +580,7 @@ async function restoreJob(id){
   }catch(e){ alert('恢复失败'); }
 }
 async function emptyTrash(){
+  if(!requireLogin()) return;
   if(!confirm('清空回收站？此操作不可恢复！')) return;
   await authFetch('/api/trash/books/empty', {method:'POST'}).catch(()=>{});
   await authFetch('/api/trash/jobs/empty', {method:'POST'}).catch(()=>{});
