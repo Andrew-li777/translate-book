@@ -183,7 +183,7 @@ async function openBook(name){
     <div class="panel" id="p-img"></div>`;
   const base = `/api/books/${name}`;
   const fmts = [['pdf','PDF'],['epub','EPUB'],['docx','DOCX'],['html','HTML']];
-  const has = k => b.files && b.files[`book.${k}`];
+  const has = k => b.files && (b.files[k] ?? b.files[`book.${k}`]);
   $('p-out').innerHTML = `<div class="dl-row">` + fmts.filter(([k])=>has(k)).map(([k,label])=>{
     const sz = fmt(b.files[`book.${k}`]);
     return `<div class="dl-cell"><span class="fmt">${label}</span><span class="sz">${sz}</span>
