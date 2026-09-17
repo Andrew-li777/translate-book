@@ -44,10 +44,25 @@ WORK_ROOT = Path("/root/translate/work")
 PYTHON = "/root/translate/book/.venv/bin/python"
 LOG_FP = WORK_ROOT / "direct.log"
 
-# ---- amd API 配置（从 .env 读 key，不硬编码/不显示）----
-API_URL = "https://developer.amd.com.cn/radeon/api/v1/chat/completions"
-MODEL = "DeepSeek-V4-Flash"
-KEY_NAME = "AMD_RADEON_API_KEY"
+# ---- 通道配置（按顺序尝试，失败自动 fallback）----
+# amd 优先（免费 $1/天），触顶(429 Daily usage)后自动切 ark（火山方舟）。
+# 从 .env 读 key，不硬编码/不显示。模型名各通道不同，分别指定。
+PROVIDERS = [
+    {
+        "name": "amd",
+        "url": "https://developer.amd.com.cn/radeon/api/v1/chat/completions",
+        "model": "DeepSeek-V4-Flash",
+        "key_name": "AMD_RADEON_API_KEY",
+    },
+    {
+        "name": "ark",
+        "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+        "model": "deepseek-v4-flash",
+        "key_name": "arkapikey",
+    },
+]
+# 当前生效通道（运行时可能因 fallback 切换）
+ACTIVE_PROVIDER = 0
 
 # ---- 并发/重试 ----
 BATCH = 3            # 并行 API 调用数（与 consumer.BATCH_SIZE 一致，保守）
@@ -78,14 +93,12 @@ def log(msg: str):
     print(line, flush=True)
 
 
-def get_amd_key() -> str:
+def get_key(key_name: str) -> str:
     for line in open("/root/.hermes/.env", encoding="utf-8"):
         line = line.strip()
-        if line.startswith(KEY_NAME + "="):
+        if line.startswith(key_name + "="):
             return line.split("=", 1)[1].strip().strip('"').strip("'")
-    raise RuntimeError(f"未找到 {KEY_NAME}")
-
-KEY = get_amd_key()
+    raise RuntimeError(f"未找到 {key_name}")
 
 
 # ---- 翻译 prompt 模板（逐字复制 skill 子代理 context 模板）----
@@ -143,55 +156,70 @@ def neighbor_context(temp_dir: str, chunk_md: str) -> str:
 
 
 def api_translate(chunk_id: str, temp_dir: str, chunk_md: str) -> tuple[str, str, dict]:
-    """调用 amd API 翻译一个 chunk。返回 (output_text, chunk_id, stats)。"""
+    """按 PROVIDERS 顺序尝试调用 API 翻译一个 chunk，失败自动 fallback。
+    返回 (output_text, chunk_id, stats)。"""
+    global ACTIVE_PROVIDER
     terms = glossary_terms(temp_dir, chunk_id + ".md")
     ctx = neighbor_context(temp_dir, chunk_id + ".md")
     user_prompt = build_user_prompt(chunk_md, chunk_id, terms, ctx)
 
-    body = {
-        "model": MODEL,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        "max_tokens": 4096,
-        "reasoning_effort": REASONING_EFFORT,
-    }
-    headers = {"Content-Type": "application/json", "Authorization": "Bearer " + KEY}
-
     last_err = None
-    for attempt in range(RETRIES):
-        req = urllib.request.Request(API_URL, data=json.dumps(body).encode(), method="POST", headers=headers)
-        try:
-            t0 = time.time()
-            r = urllib.request.urlopen(req, timeout=TIMEOUT)
-            d = json.loads(r.read())
-            msg = ((d.get("choices") or [{}])[0].get("message")) or {}
-            text = (msg.get("content") or "").strip()
-            u = d.get("usage") or {}
-            stats = {
-                "chunk": chunk_id, "latency_s": round(time.time() - t0, 1),
-                "completion_tokens": u.get("completion_tokens", "?"),
-                "reasoning_tokens": u.get("reasoning_tokens", "?"),
-                "total_tokens": u.get("total_tokens", "?"),
-                "attempts": attempt + 1,
-            }
-            if not text:
-                raise RuntimeError(f"空响应内容: {str(d)[:300]}")
-            return text, chunk_id, stats
-        except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8", "replace")[:300]
-            last_err = f"HTTP {e.code}: {err_body}"
-            if e.code == 429 and attempt < RETRIES - 1:
-                time.sleep(BACKOFF_BASE * (2 ** attempt) + random.uniform(0, 5))
-                continue
-            break
-        except Exception as e:
-            last_err = f"{type(e).__name__}: {e}"
-            if attempt < RETRIES - 1:
-                time.sleep(BACKOFF_BASE * (2 ** attempt) + random.uniform(0, 5))
-                continue
-            break
+    used_provider = None
+    for pi, prov in enumerate(PROVIDERS):
+        body = {
+            "model": prov["model"],
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            "max_tokens": 4096,
+            "reasoning_effort": REASONING_EFFORT,
+        }
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer " + get_key(prov["key_name"])}
+        for attempt in range(RETRIES):
+            req = urllib.request.Request(prov["url"], data=json.dumps(body).encode(), method="POST", headers=headers)
+            try:
+                t0 = time.time()
+                r = urllib.request.urlopen(req, timeout=TIMEOUT)
+                d = json.loads(r.read())
+                msg = ((d.get("choices") or [{}])[0].get("message")) or {}
+                text = (msg.get("content") or "").strip()
+                u = d.get("usage") or {}
+                stats = {
+                    "chunk": chunk_id, "latency_s": round(time.time() - t0, 1),
+                    "completion_tokens": u.get("completion_tokens", "?"),
+                    "reasoning_tokens": u.get("reasoning_tokens", "?"),
+                    "total_tokens": u.get("total_tokens", "?"),
+                    "attempts": attempt + 1,
+                    "provider": prov["name"],
+                }
+                if not text:
+                    raise RuntimeError(f"空响应内容: {str(d)[:300]}")
+                # 切换了通道则更新全局 ACTIVE_PROVIDER 并记日志
+                if pi != ACTIVE_PROVIDER:
+                    log(f"    🔄 通道切换: {PROVIDERS[ACTIVE_PROVIDER]['name']} → {prov['name']}")
+                ACTIVE_PROVIDER = pi
+                return text, chunk_id, stats
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode("utf-8", "replace")[:300]
+                last_err = f"HTTP {e.code}: {err_body}"
+                # 429 Daily usage limit / rate_limit_exceeded = 额度耗尽，立即切下一通道
+                if e.code == 429 and ("Daily usage" in err_body or "rate_limit_exceeded" in err_body):
+                    log(f"    ⚠ {prov['name']} 额度耗尽({err_body[:80]}...)，切下一通道")
+                    break  # 换 provider，不再重试
+                if e.code == 429 and attempt < RETRIES - 1:
+                    time.sleep(BACKOFF_BASE * (2 ** attempt) + random.uniform(0, 5))
+                    continue
+                if e.code in (401, 403):
+                    log(f"    ⚠ {prov['name']} 鉴权失败，切下一通道")
+                    break
+                break
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {e}"
+                if attempt < RETRIES - 1:
+                    time.sleep(BACKOFF_BASE * (2 ** attempt) + random.uniform(0, 5))
+                    continue
+                break
     raise RuntimeError(f"翻译失败 {chunk_id}: {last_err}")
 
 
@@ -295,7 +323,8 @@ def main():
     ap.add_argument("--chunks", help="指定 chunk（配合 --once 做 A/B 测试）")
     args = ap.parse_args()
 
-    log(f"══ translate_direct 启动 (model={MODEL}, reasoning={REASONING_EFFORT}, BATCH={BATCH}) ══")
+    providers_desc = " → ".join(p["name"] for p in PROVIDERS)
+    log(f"══ translate_direct 启动 (providers={providers_desc}, reasoning={REASONING_EFFORT}, BATCH={BATCH}) ══")
     if args.chunks:
         run_once(args.chunks)
         return

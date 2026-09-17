@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""图片引用修复：把源 chunk 里缺失的图片引用补回 output chunk。
+"""图片引用修复：对齐源 chunk 与 output chunk 的图片引用（补缺失、删多余）。
 
-merge_and_build.py 会做 image validation，output 若比源少图片引用（模型翻译时可能丢失）
-会导致合并失败。本脚本做确定性修复：逐行比对源 chunk 的图片引用，把 output 里缺失的
-按原位置插回。行内 <img src> 引用同理。
+merge_and_build.py 会做 image validation，output 若比源少图片引用（模型翻译时丢失）
+会失败；若比源多图片引用（模型幻觉生成的图，如 `[]![Image 48](images/xxxx.jpg)`）
+也会失败。本脚本做确定性修复：把 output 里缺失的图片引用补回、多余的图片引用删除。
 
 用法:
   python3 fix_images.py <temp_dir> <chunk_id>
@@ -30,6 +30,22 @@ def collect_imgs(text: str) -> dict:
     return imgs
 
 
+def remove_extra_imgs(text: str, keep_paths: set) -> tuple[str, int]:
+    """删除 output 里源 chunk 不存在的图片引用行（模型幻觉生成的图）。返回(新文本, 删除数)。"""
+    lines = text.splitlines()
+    out = []
+    removed = 0
+    for line in lines:
+        # 该行包含图片引用且所有引用路径都在 keep 集合外 → 删整行
+        paths = [m.group(1) for m in IMG_BLOCK_RE.finditer(line)]
+        paths += [m.group(2) for m in IMG_SRC_RE.finditer(line)]
+        if paths and all(p not in keep_paths for p in paths):
+            removed += 1
+            continue
+        out.append(line)
+    return "\n".join(out), removed
+
+
 def fix(temp_dir: str, chunk_id: str) -> int:
     src = Path(temp_dir) / f"{chunk_id}.md"
     out = Path(temp_dir) / f"output_{chunk_id}.md"
@@ -41,19 +57,22 @@ def fix(temp_dir: str, chunk_id: str) -> int:
     src_imgs = collect_imgs(src_text)
     out_imgs = collect_imgs(out_text)
     missing = [p for p in src_imgs if p not in out_imgs]
-    if not missing:
-        return 0
-    # 缺失的图片引用，按源中的顺序补到 output 末尾（图片引用在原文是占位，位置变化
-    # 不影响正文语义；插入到 output 末尾保留引用）。更优做法是按源行号插回，
-    # 但为稳健，先统一追加到文件末尾（图片引用不破坏 markdown 结构）。
+    # 先删多余图（源不存在的幻觉图）
+    extra_paths = [p for p in out_imgs if p not in src_imgs]
+    removed = 0
+    if extra_paths:
+        out_text, removed = remove_extra_imgs(out_text, set(src_imgs.keys()))
+    # 再补缺失图
     added = 0
     for path in missing:
         line = src_imgs[path][0]  # 用源里该图第一处原样
         out_text = out_text.rstrip() + "\n\n" + line + "\n"
         added += 1
+    if not missing and not extra_paths:
+        return 0
     out.write_text(out_text, encoding="utf-8")
-    print(f"补回 {added} 个缺失图片引用: {missing}")
-    return added
+    print(f"补回 {added} 个缺失图片引用: {missing}; 删除 {removed} 个多余图片引用: {extra_paths}")
+    return added + removed
 
 
 if __name__ == "__main__":

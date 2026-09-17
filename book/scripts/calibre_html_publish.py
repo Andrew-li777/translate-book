@@ -242,6 +242,9 @@ def convert_html_with_calibre(html_file, output_file, format_type, timeout=600, 
         cmd.extend([
             "--epub-version", "3"
         ])
+        # 大代码块/无标题连续区会导致 SplitError（Calibre 找不到分割点）。
+        # flow-size 设为 500KB 避免强制分割超大块（默认 260KB 会 SplitError）。
+        cmd.extend(["--flow-size", "500"])
         if cover:
             cmd.extend(["--cover", cover])
     elif format_type == 'pdf':
