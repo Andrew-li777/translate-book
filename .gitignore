@@ -38,3 +38,5 @@ book/tests/.artifacts/
 .idea/
 .vscode/
 *.swp
+*.bak*
+*.bak-*
