@@ -109,9 +109,24 @@ function renderLibrary(){
   window.scrollTo(0,0);
 }
 function showLibrary(){ CURRENT=null; $('crumb-book').style.display='none'; $('crumb-sep').style.display='none'; $('page-title').textContent=''; renderNav(); renderLibrary(); }
-function dlFmt(name, ext){
+async function dlFmt(name, ext){
   if(!isAdmin()){ openLoginModal(); return; }
-  window.location = `/api/books/${name}/download/book.${ext}`;
+  const url = `/api/books/${name}/download/book.${ext}`;
+  try{
+    const r = await fetch(url, { headers: _authHeaders() });
+    if(r.status === 401){ setAuth(''); updateAuthBadge(); openLoginModal(); return; }
+    if(r.status === 403){ openLoginModal(); return; }
+    if(!r.ok){ alert('下载失败：' + r.status); return; }
+    // 转 Blob 触发浏览器下载（保留文件名）
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `book.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+  }catch(e){ alert('下载失败：' + (e.message || e)); }
 }
 
 /* ===== P5: 全文搜索 ===== */
