@@ -56,6 +56,32 @@ def _status(dir_path: Path, manifest: dict | None, chunk_count: int) -> str:
     return "empty"
 
 
+def _progress(status: str, chunk_count: int) -> dict:
+    """把状态字符串解析成结构化进度，供前端画进度条
+
+    返回 {done, total, pct, active}
+      done/total  已译块数 / 总块数
+      pct         百分比（0-100，total 未知时给 0）
+      active      是否正在处理（translating/converting）→ 前端据此开启自动刷新
+    """
+    done, total = 0, chunk_count or 0
+    if status.startswith("translating:"):
+        try:
+            a, b = status.split(":", 1)[1].split("/")
+            done, total = int(a), int(b)
+        except Exception:
+            pass
+    elif status == "done":
+        done = total
+    pct = int(round(done * 100 / total)) if total > 0 else 0
+    return {
+        "done": done,
+        "total": total,
+        "pct": min(pct, 100),
+        "active": status.startswith("translating") or status == "converting",
+    }
+
+
 def scan_books() -> list[dict]:
     """扫描工作区，返回书列表（按 mtime 倒序）"""
     books = []
@@ -83,6 +109,7 @@ def scan_books() -> list[dict]:
             "input_lang": meta["input_lang"],
             "status": status,
             "chunk_count": chunk_count,
+            "progress": _progress(status, chunk_count),
             "mtime": int(d.stat().st_mtime),
             "files": _file_summary(d),
         })
@@ -136,6 +163,7 @@ def get_book(name: str) -> dict | None:
         "meta": _read_meta(d),
         "status": _status(d, manifest, chunk_count),
         "chunk_count": chunk_count,
+        "progress": _progress(_status(d, manifest, chunk_count), chunk_count),
         "chunks": chunks,
         "manifest": manifest,
         "files": _file_summary(d),

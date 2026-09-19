@@ -65,6 +65,22 @@ a{color:inherit;text-decoration:none}
 .dot.done{background:var(--ok)} .dot.converting{background:var(--busy)}
 .dot.translating{background:var(--warn)} .dot.empty,.dot.converted{background:var(--ink-soft)}
 .book-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.book-col{flex:1;min-width:0;display:flex;flex-direction:column}
+
+/* ===== 进度条 ===== */
+.pbar{position:relative;height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+.pbar>i{display:block;height:100%;width:0;background:var(--warn);border-radius:3px;transition:width .5s ease}
+.pbar.done>i{background:var(--ok)}
+.pbar.indet>i{width:35%!important;animation:pbar-slide 1.4s ease-in-out infinite}
+@keyframes pbar-slide{0%{margin-left:-35%}100%{margin-left:100%}}
+.pbar-mini{height:3px;border-radius:2px;margin-top:4px}
+.pbar-mini>i{border-radius:2px}
+.prog-line{display:flex;align-items:center;gap:10px;min-width:260px;flex:1;max-width:460px}
+.prog-line .pbar{flex:1}
+.prog-pct{font-family:var(--font-mono);font-size:.68rem;color:var(--warn);white-space:nowrap;min-width:74px;text-align:right}
+.prog-pct.done{color:var(--ok)}
+.card .pbar{margin-top:6px}
+.card.card-busy{box-shadow:inset 3px 0 0 var(--warn)}
 .foot{padding:14px 20px;border-top:1px solid var(--line);font-size:.66rem;color:var(--ink-soft)}
 
 /* ===== 主区 ===== */
@@ -301,6 +317,6 @@ a{color:inherit;text-decoration:none}
     </div>
   </div>
 </div>
-<script src="/static/app.js?v=20260918a"></script>
+<script src="/static/app.js?v=20260919a"></script>
 </body>
 </html>

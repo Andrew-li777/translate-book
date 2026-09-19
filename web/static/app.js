@@ -67,6 +67,31 @@ function statusInfo(s){
   return {t:'空',c:'empty'};
 }
 
+/* ===== 进度：结构化进度取值 + 进度条渲染 ===== */
+function progOf(b){
+  if(b && b.progress) return b.progress;               // 后端已给
+  const s = (b && b.status) || '';
+  let done = 0, total = (b && b.chunk_count) || 0;     // 兜底：自己解析状态串
+  if(s.startsWith('translating:')){
+    const [a, t] = (s.split(':')[1] || '').split('/');
+    done = parseInt(a, 10) || 0; total = parseInt(t, 10) || total;
+  } else if(s === 'done'){ done = total; }
+  const pct = total > 0 ? Math.min(100, Math.round(done * 100 / total)) : 0;
+  return {done, total, pct, active: s.startsWith('translating') || s === 'converting'};
+}
+// 进度条 HTML。total 未知且 active → 无限循环的“不确定态”动画条
+function barHtml(p, extraCls){
+  const indet = p.active && !p.total;
+  const cls = 'pbar' + (extraCls ? ' ' + extraCls : '') + (p.pct >= 100 ? ' done' : '') + (indet ? ' indet' : '');
+  const w = indet ? '' : ` style="width:${p.pct}%"`;
+  return `<div class="${cls}"><i${w}></i></div>`;
+}
+// 状态徽章 + 进度条 + 百分比 一行
+function progLineHtml(p, st, cls){
+  const label = p.active && !p.total ? '处理中' : `${p.done}/${p.total} · ${p.pct}%`;
+  return `<div class="prog-line ${cls||''}">${barHtml(p)}<span class="prog-pct${p.pct>=100?' done':''}">${label}</span></div>`;
+}
+
 /* ===== 书库 ===== */
 let SEL_BOOKS = new Set(), SEL_JOBS = new Set();  // 单项选择状态
 
@@ -76,13 +101,17 @@ async function loadLibrary(){
   }catch(e){ $('content').innerHTML = `<div class="empty-hint">加载失败：${esc(e.message)}</div>`; return; }
   renderNav(); renderLibrary();
   $('foot-meta').textContent = `${new Date().toISOString().slice(0,10)} · ${BOOKS.length} 本`;
+  if(anyActive()) startProgPoll(); else stopProgPoll();
 }
 function renderNav(){
   $('book-nav').innerHTML = BOOKS.map(b=>{
     const st = statusInfo(b.status);
+    const p = progOf(b);
+    const mini = p.active ? barHtml(p, 'pbar-mini') : '';
     return `<div class="book-item ${CURRENT===b.name?'active':''}" onclick="openBook('${esc(b.name)}')">
       <input type="checkbox" class="chk" ${SEL_BOOKS.has(b.name)?'checked':''} onchange="toggleSelBook('${esc(b.name)}', this.checked)" onclick="event.stopPropagation()">
-      <span class="dot ${st.c}"></span><span class="book-name" title="${esc(b.title)}">${esc(b.title)}</span></div>`;
+      <span class="dot ${st.c}"></span>
+      <span class="book-col"><span class="book-name" title="${esc(b.title)}">${esc(b.title)}</span>${mini}</span></div>`;
   }).join('');
   $('nav-count').textContent = BOOKS.length;
   updateSelUI();
@@ -92,15 +121,19 @@ function renderLibrary(){
   if(!BOOKS.length){ c.innerHTML = '<div class="empty-hint">暂无藏书 · 等待第一本书入库</div>'; return; }
   c.innerHTML = '<div class="grid">' + BOOKS.map(b=>{
     const st = statusInfo(b.status);
+    const p = progOf(b);
     const files = Object.entries(b.files||{}).map(([k,v])=>`<span>${k} ${fmt(v)}</span>`).join('');
-    return `<div class="card" onclick="openBook('${esc(b.name)}')">
+    const bar = p.active ? barHtml(p) : '';
+    const pct = p.active ? `<span class="prog-pct${p.pct>=100?' done':''}">${p.total?p.pct+'%':'…'}</span>` : '';
+    return `<div class="card${p.active?' card-busy':''}" onclick="openBook('${esc(b.name)}')">
       <div class="card-body">
         <div class="card-title">${esc(b.title)}</div>
         <div class="card-author">${esc(b.author||'—')}</div>
         <div class="card-meta">
           <span class="badge ${st.c}">${st.t}</span>
-          <span>${b.chunk_count||0} chunks</span><span>→ ${esc(b.output_lang||'zh')}</span>
+          <span>${b.chunk_count||0} chunks</span><span>→ ${esc(b.output_lang||'zh')}</span>${pct}
         </div>
+        ${bar}
       </div>
       <div class="card-foot">${files||'<span>—</span>'}
         <span class="dl-btn" onclick="event.stopPropagation();dlFmt('${esc(b.name)}','epub')">EPUB</span>
@@ -108,7 +141,45 @@ function renderLibrary(){
   }).join('') + '</div>';
   window.scrollTo(0,0);
 }
-function showLibrary(){ CURRENT=null; $('crumb-book').style.display='none'; $('crumb-sep').style.display='none'; $('page-title').textContent=''; renderNav(); renderLibrary(); }
+function showLibrary(){
+  CURRENT=null; CUR_ACTIVE=false;
+  $('crumb-book').style.display='none'; $('crumb-sep').style.display='none'; $('page-title').textContent='';
+  renderNav(); renderLibrary();
+  if(anyActive()) startProgPoll();
+}
+
+/* ===== 进度自动刷新：仅在有书“翻译中/转换中”时开启，全部完成后自动停 ===== */
+let PROG_TIMER = null;   // setInterval 句柄
+let CUR_ACTIVE = false;  // 当前详情页的书是否在跑
+
+function anyActive(){ return (BOOKS||[]).some(b=>progOf(b).active); }
+function startProgPoll(){ if(!PROG_TIMER) PROG_TIMER = setInterval(pollTick, 4000); }
+function stopProgPoll(){ if(PROG_TIMER){ clearInterval(PROG_TIMER); PROG_TIMER = null; } }
+
+// 详情页顶部的进度条（done 的书也显示 100%，未开始则不显示）
+function paintDetailProg(b){
+  const el = $('detail-prog'); if(!el) return;
+  const p = progOf(b);
+  if(!p.total){ el.innerHTML = ''; return; }
+  const flag = p.active ? ' <span style="color:var(--warn)">· 进行中</span>' : '';
+  el.innerHTML = `<div class="kicker" style="margin-bottom:6px">翻译进度 · ${p.done}/${p.total} 块${flag}</div>` + progLineHtml(p);
+}
+
+async function pollTick(){
+  try{
+    if(CURRENT){                                  // 详情页：只刷头部，不动内容
+      let b; try{ b = await api(`/api/books/${CURRENT}`); }catch(e){ return; }
+      CUR_ACTIVE = progOf(b).active;
+      paintDetailProg(b);
+      const st = statusInfo(b.status), badge = document.querySelector('#detail-head .badge');
+      if(badge){ badge.className = 'badge ' + st.c; badge.textContent = st.t; }
+      if(!CUR_ACTIVE) stopProgPoll();
+    } else {                                      // 书库页：整体重绘（含书卡/侧栏进度条）
+      await loadLibrary();
+      if(!anyActive()) stopProgPoll();
+    }
+  }catch(e){}
+}
 async function dlFmt(name, ext){
   if(!isAdmin()){ openLoginModal(); return; }
   const url = `/api/books/${name}/download/book.${ext}`;
@@ -174,12 +245,14 @@ async function openBook(name){
   let b;
   try{ b = await api(`/api/books/${name}`); }catch(e){ $('content').innerHTML=`<div class="empty-hint">${esc(e.message)}</div>`; return; }
   $('page-title').textContent = b.meta.title || name;
-  const st = statusInfo(b.status);
+  const st0 = statusInfo(b.status), p0 = progOf(b);
+  CUR_ACTIVE = p0.active;
   $('content').innerHTML = `
-    <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;flex-wrap:wrap">
-      <span class="badge ${st.c}">${st.t}</span>
+    <div id="detail-head" style="display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap">
+      <span class="badge ${st0.c}">${st0.t}</span>
       <span class="kicker">${esc(b.meta.author||'')} · ${b.chunk_count||0} chunks · → ${esc(b.meta.output_lang||'zh')}</span>
     </div>
+    <div id="detail-prog" style="margin-bottom:18px"></div>
     <div class="tabs">
       <div class="tab active" data-tab="out" onclick="switchTab('out')">成品</div>
       <div class="tab" data-tab="trans" onclick="switchTab('trans')">译文</div>
@@ -197,6 +270,8 @@ async function openBook(name){
     <div class="panel" id="p-gloss"></div>
     <div class="panel" id="p-img"></div>`;
   const base = `/api/books/${name}`;
+  paintDetailProg(b);
+  if(CUR_ACTIVE) startProgPoll();
   const fmts = [['pdf','PDF'],['epub','EPUB'],['docx','DOCX'],['html','HTML']];
   const has = k => b.files && (b.files[k] ?? b.files[`book.${k}`]);
   $('p-out').innerHTML = `<div class="dl-row">` + fmts.filter(([k])=>has(k)).map(([k,label])=>{
@@ -425,7 +500,9 @@ function renderJobs(jobs){
   el.innerHTML = jobs.map(j=>{
     const p = j.progress||{};
     const pct = p.chunks_total ? Math.round((p.chunks_done||0)/p.chunks_total*100) : null;
-    const bar = pct!==null ? `<div style="height:3px;background:var(--line);border-radius:2px;margin-top:3px"><div style="height:3px;width:${pct}%;background:var(--accent);border-radius:2px"></div></div>` : '';
+    const jp = {done:p.chunks_done||0, total:p.chunks_total||0, pct:pct||0,
+                active:(j.status!=='done'&&j.status!=='failed'&&j.status!=='cancelled')};
+    const bar = (jp.active || jp.pct) ? barHtml(jp, 'pbar-mini') : '';
     const cancel = (j.status!=='done'&&j.status!=='failed'&&j.status!=='cancelled')
       ? `<span style="margin-left:6px;cursor:pointer;color:#c62828" onclick="event.stopPropagation();cancelJob('${j.id}')">✕</span>` : '';
     return `<div class="job-item" id="job-${j.id}" onclick="toggleJobDetail(this)">
