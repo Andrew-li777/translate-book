@@ -3,7 +3,7 @@
 基于 **translate-book skill**（`/root/translate/book`）的个人线上翻译网站（`/root/translate/web`）。
 上传 PDF/DOCX/EPUB → 自动分块 → LLM 翻译 → 5 格式成品（PDF/DOCX/EPUB/HTML/Markdown），全程浏览器操作、后台自动推进。
 
-- **在线访问**：`https://trs.andrew-li.top`（basicauth 保护）
+- **在线访问**：`https://trs.andrew-li.top`（**游客可直接参观**；上传/删除/下载/改术语表需登录）
 - **引擎**：`book/` 目录（上游 `Andrew-li777/translate-book` 仓库移植 + 适配）
 - **驱动**：Hermes cron 消费者每 3 分钟自动翻译
 
@@ -24,6 +24,7 @@
 | **术语表** | 每书独立术语表，**保存即触发全书重译**（专有名词可控） |
 | **搜索** | 全文搜索（译文/原文/全部），命中直接跳转对照阅读 |
 | **侧栏** | 可收起（localStorage 记忆） |
+| **权限** | 三档鉴权：**游客**（只读参观：书库/对照/搜索/渲染）、**管理员**（全功能）、凭据错误一律 401；游客搜索限频 10 次/分 |
 
 ## 系统架构
 
@@ -92,22 +93,24 @@ cat /root/translate/work/jobs/*/job.json     # 任务状态
 
 ## 使用流程
 
-1. 打开 `https://trs.andrew-li.top`，输入凭据（`/root/.translate-web-cred`）
-2. 侧栏「＋ 上传新书」→ 选文件 → 开始上传并转换
-3. 任务卡片显示 converting → ready（SSE 实时）
-4. **无需任何操作**：cron 自动翻译（每 3 分钟 3 块），书库出现后即可浏览/对照
-5. 全书完成后自动合并 → 详情页下载 5 格式成品
-6. 想改专有名词译法？详情页「术语表」tab 编辑保存 → 自动触发重译
+1. 打开 `https://trs.andrew-li.top` —— **默认以游客身份直接浏览**（书库/对照阅读/搜索都可用）
+2. 要做管理操作（上传/删除/下载/改术语表）？点顶栏 **`游客 · GUEST`** 徽章输入凭据（`/root/.translate-web-cred`），或直接在触发时弹出的登录框里输入
+3. 侧栏「＋ 上传新书」→ 选文件 → 开始上传并转换
+4. 任务卡片显示 converting → ready（SSE 实时）
+5. **无需任何操作**：cron 自动翻译（每 3 分钟 3 块），书库出现后即可浏览/对照
+6. 全书完成后自动合并 → 详情页下载 5 格式成品
+7. 想改专有名词译法？详情页「术语表」tab 编辑保存 → 自动触发重译
 
 ## 配置说明
 
 | 项 | 位置 | 说明 |
 |---|---|---|
-| 凭据 | `/root/.translate-web-cred`（chmod 600） | basicauth 账号密码 |
-| Caddy | `/etc/caddy/Caddyfile` | 双站反代（trs→8788 / :8080→8787） |
+| 凭据 | `/root/.translate-web-cred`（chmod 600） | **应用层** Basic 认证账号密码（`web/auth.py` bcrypt 校验；Caddy 不再 basicauth）|
+| Caddy | `/etc/caddy/Caddyfile` | 双站反代（trs→8788 / :8080→8787），**只转发不做认证** |
 | Cloudflare | 控制台 Origin Rules | Hostname→8080（**必须 Hostname 字段**） |
 | cron | Hermes `ab9ef9653179` | 每 3 分钟，prompt 含「超时安全：output 落盘后下轮 record_only 续译」 |
-| LLM | Hermes config（volcengine-plan / deepseek-v4-flash） | 主通道，reasoning high |
+| LLM（网关） | Hermes config `model:` | 主通道 **deepseek 官方 / deepseek-v4-flash，reasoning medium**；fallback 首位 ark |
+| LLM（D 引擎） | `web/translate_direct.py` 的 `PROVIDERS` | ⚠️ 仍为 `[amd, ark]`——两跳当前均不可用（问题 #29），待补 deepseek 官方 |
 
 ## 已知问题与维护
 
