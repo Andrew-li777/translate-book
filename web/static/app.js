@@ -349,14 +349,15 @@ async function openBook(name){
     return `<div class="dl-cell"><span class="fmt">${label}</span><span class="sz">${sz}</span>
       <button class="dl-btn" onclick="dlFmt('${esc(name)}','${k}')">下载</button></div>`;
   }).join('') + `</div>` +
-    (has('book.html') ? `<div style="margin-top:16px"><div class="kicker" style="margin-bottom:8px">网页版预览</div>
-      <iframe class="doc-preview" src="${base}/file/book.html?raw=1"></iframe></div>` : '');
-  if(has('output.md')) loadMd('trans','output.md',name); else $('p-trans').innerHTML='<div class="empty-hint">尚无译文</div>';
-  if(has('input.md')) loadMd('src','input.md',name); else $('p-src').innerHTML='<div class="empty-hint">无原文 markdown</div>';
-  initCompare(name, b);
-  loadMeta(name);
-  loadGlossary(name);
-  if(b.images) loadImages(name);
+    (has('book.html') ? `<div style="margin-top:16px"><div class="kicker" style="margin-bottom:8px">网页版预览（点击加载 · ${fmt(b.files['book.html'])}）</div>
+      <div id="doc-preview-slot"><button class="dl-btn" onclick="loadDocPreview('${esc(name)}')">加载网页预览</button></div></div>` : '');
+  CUR_B = b;
+  TABS_LOADED = {out: true};          // P3: 其余面板首次切换时才加载（打开即用，不再等 9 个请求）
+}
+function loadDocPreview(name){
+  const slot = $('doc-preview-slot');
+  if(!slot) return;
+  slot.innerHTML = `<iframe class="doc-preview" src="/api/books/${name}/file/book.html?raw=1"></iframe>`;
 }
 async function loadMd(panel, path, name){
   const p = $(`p-${panel}`);
@@ -365,13 +366,28 @@ async function loadMd(panel, path, name){
     p.innerHTML = `<div class="markdown">${d.html}</div>`;
   }catch(e){ p.innerHTML = `<div class="empty-hint">${esc(e.message)}</div>`; }
 }
-function switchTab(t){
+let CUR_B = null;                 // P3: 当前书详情（懒加载面板复用）
+let TABS_LOADED = {};             // P3: 已加载过的面板
+async function switchTab(t){
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active', x.dataset.tab===t));
   document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('active', x.id===`p-${t}`));
+  await ensurePanel(t);
+}
+async function ensurePanel(t){
+  if(!CURRENT || !CUR_B || TABS_LOADED[t]) return;
+  TABS_LOADED[t] = true;
+  const name = CURRENT, b = CUR_B;
+  const has = k => b.files && (b.files[k] ?? b.files[`book.${k}`]);
+  if(t==='trans'){ if(has('output.md')) loadMd('trans','output.md',name); else $('p-trans').innerHTML='<div class="empty-hint">尚无译文</div>'; }
+  else if(t==='src'){ if(has('input.md')) loadMd('src','input.md',name); else $('p-src').innerHTML='<div class="empty-hint">无原文 markdown</div>'; }
+  else if(t==='cmp'){ initCompare(name, b); }
+  else if(t==='meta'){ loadMeta(name); }
+  else if(t==='gloss'){ loadGlossary(name); }
+  else if(t==='img'){ if(b.images) loadImages(name); }
 }
 
 /* ===== 对照阅读 ===== */
-let CUR_NAME=null, CUR_VIEW='render';
+let CUR_NAME=null, CUR_VIEW='render', _chunkSeq=0;
 async function mdHtml(name, file){
   try{ const d = await api(`/api/books/${name}/render/${file}`); return `<div class="markdown">${d.html}</div>`; }
   catch(e){ return '<div class="empty-hint">渲染失败</div>'; }
@@ -416,8 +432,10 @@ function toggleCmpView(){
 }
 async function cmpGo(cid){
   if(!cid || !CUR_NAME) return;
+  const seq = ++_chunkSeq, nm = CUR_NAME;      // P3: 防过期响应覆盖（快速切换/跨书）
   let d;
   try{ d = await api(`/api/books/${CUR_NAME}/chunk/${cid}`); }catch(e){ return; }
+  if(seq !== _chunkSeq || nm !== CUR_NAME) return;
   CUR_CHUNK = d;
   $('cmp-pos').textContent = `第 ${d.index}/${d.total} 块`;
   if(d.prev){ $('cmp-select').value = d.id; }
@@ -425,10 +443,14 @@ async function cmpGo(cid){
 }
 async function renderCmp(){
   if(!CUR_CHUNK || !CUR_NAME) return;
+  const seq = _chunkSeq, nm = CUR_NAME;
   const d = CUR_CHUNK, src = $('cmp-src'), trans = $('cmp-trans');
   if(CUR_VIEW === 'render'){
-    src.innerHTML = d.src ? await mdHtml(CUR_NAME, `${d.id}.md`) : '<div class="empty-hint">无原文</div>';
-    trans.innerHTML = d.trans ? await mdHtml(CUR_NAME, `output_${d.id}.md`) : '<div class="empty-hint">（未翻译）</div>';
+    const hs = d.src ? await mdHtml(nm, `${d.id}.md`) : '<div class="empty-hint">无原文</div>';
+    if(seq !== _chunkSeq || nm !== CUR_NAME) return;
+    const ht = d.trans ? await mdHtml(nm, `output_${d.id}.md`) : '<div class="empty-hint">（未翻译）</div>';
+    if(seq !== _chunkSeq || nm !== CUR_NAME) return;
+    src.innerHTML = hs; trans.innerHTML = ht;
   } else {
     src.innerHTML = `<pre>${esc(d.src)}</pre>`;
     trans.innerHTML = `<pre>${esc(d.trans ?? '（未翻译）')}</pre>`;

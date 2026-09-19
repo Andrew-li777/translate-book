@@ -20,6 +20,7 @@ import books
 import config
 import jobs
 import r2
+import render_cache
 import settings
 from auth import AuthMiddleware, load_admin_cred
 from guest_rules import guest_read_allowed
@@ -90,7 +91,8 @@ def api_book(name: str):
     b = books.get_book(name)
     if b is None:
         raise HTTPException(404, "书不存在")
-    st = books.storage_view([b])
+    # P0: 与书库页共用同一份快照缓存（local_map 相同 → key 相同 → 30s 内不重复列举 R2）
+    st = books.storage_view(books.scan_books())
     b["r2"] = st["books"].get(name, {})
     b["storage"] = {"configured": st["configured"], "available": st["available"]}
     return b
@@ -148,15 +150,20 @@ def api_file(name: str, path: str, raw: bool = Query(False)):
 
 @app.get("/api/books/{name}/render/{path:path}")
 def api_render(name: str, path: str):
-    """用 Python markdown 渲染 md 文件为 HTML（前端直接内嵌）"""
-    import markdown as md
+    """用 Python markdown 渲染 md 文件为 HTML（前端直接内嵌）；P0-2：LRU 缓存"""
     fp = books.resolve_file(name, path)
     if fp is None or fp.suffix.lower() != ".md":
         raise HTTPException(404, "文件不存在")
-    text = fp.read_text(encoding="utf-8", errors="replace")
-    html = md.markdown(_strip_pandoc_attrs(text), extensions=["extra", "tables", "fenced_code", "sane_lists"])
-    # 图片相对路径重写为绝对路径（经 file 端点），修复页面内裂图
-    html = _absolutize_img_src(html, name)
+
+    def _build() -> str:
+        import markdown as md
+        text = fp.read_text(encoding="utf-8", errors="replace")
+        html = md.markdown(_strip_pandoc_attrs(text),
+                           extensions=["extra", "tables", "fenced_code", "sane_lists"])
+        # 图片相对路径重写为绝对路径（经 file 端点），修复页面内裂图
+        return _absolutize_img_src(html, name)
+
+    html = render_cache.render(name, fp, _build)
     return {"html": html, "name": fp.name, "path": path}
 
 
@@ -175,15 +182,19 @@ _BARE_BRACKET = re.compile(r"\[([^\]]+)\](?!\()")
 _TRAIL_BS = re.compile(r"(?m)\\+\s*$")
 # 图片相对路径 -> 绝对路径：src="images/xxx.png" -> src="/api/books/{name}/file/images/xxx.png"
 _IMG_SRC_RE = re.compile(r'(<img[^>]*?\ssrc=["\'])(?!https?:|/|data:|blob:|#)([^"\']+)(["\'])', re.I)
+# P3: 给还没有 loading 属性的 <img> 注入懒加载（大图片书不再一次性拉全量）
+_LAZY_IMG_RE = re.compile(r"<img(?![^>]*\bloading=)", re.I)
 
 
 def _absolutize_img_src(html: str, name: str) -> str:
-    """把 HTML 里相对路径图片重写为绝对路径（经 file 端点），修复 iframe/页面内裂图。"""
+    """把 HTML 里相对路径图片重写为绝对路径（经 file 端点），修复 iframe/页面内裂图；
+    P3: 顺带给 <img> 注入 loading="lazy"（大图片书不再一次性拉全量）。"""
     def _repl(m):
         src = m.group(2)
         clean = src[2:] if src.startswith("./") else src
         return f'{m.group(1)}/api/books/{name}/file/{clean}{m.group(3)}'
-    return _IMG_SRC_RE.sub(_repl, html)
+    html = _IMG_SRC_RE.sub(_repl, html)
+    return _LAZY_IMG_RE.sub(r'<img loading="lazy"', html)
 
 
 def _em_repl(m):

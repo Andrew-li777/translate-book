@@ -16,8 +16,10 @@
 is_read_allowed 返回 True 表示游客放行；返回 False 表示需管理员。
 """
 import base64
+import hashlib
 import hmac
 import os
+import threading
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -50,6 +52,41 @@ def _basic_ok(auth_header: str, admin_user: str, admin_hash: str) -> bool:
         return bcrypt.checkpw(password.encode("utf-8"), admin_hash.encode("utf-8"))
     except ValueError:
         return False
+
+
+# ------------------------- P0-1 校验结果缓存（性能） -------------------------
+# bcrypt cost=14 每次约 1.2s：同一凭据在 TTL 内只付一次校验成本，其余请求
+# 直接命中（命中滑动续期 → 活跃用户不再重复付费）。只缓存成功；失败一律走
+# 完整 bcrypt（保持爆破成本）。缓存 key 含凭据指纹（user+hash），轮换密码
+# 或改用户名后旧条目自然失配。
+_AUTH_CACHE_TTL = 900          # 秒
+_AUTH_CACHE_MAX = 256
+_auth_cache: dict = {}         # key -> (cred_fp, expiry_monotonic)
+_auth_cache_lock = threading.Lock()
+
+
+def _cred_fp(user: str, admin_hash: str) -> str:
+    return hashlib.sha256(("%s|%s" % (user, admin_hash)).encode("utf-8")).hexdigest()[:16]
+
+
+def _basic_ok_cached(auth_header: str, admin_user: str, admin_hash: str) -> bool:
+    if not auth_header or not auth_header.startswith("Basic "):
+        return False
+    fp = _cred_fp(admin_user, admin_hash)
+    key = hashlib.sha256(("%s|%s" % (fp, auth_header)).encode("utf-8")).hexdigest()
+    now = time.monotonic()
+    with _auth_cache_lock:
+        hit = _auth_cache.get(key)
+        if hit and hit[0] == fp and hit[1] > now:
+            _auth_cache[key] = (fp, now + _AUTH_CACHE_TTL)   # 滑动续期
+            return True
+    ok = _basic_ok(auth_header, admin_user, admin_hash)
+    if ok:
+        with _auth_cache_lock:
+            if len(_auth_cache) >= _AUTH_CACHE_MAX:
+                _auth_cache.clear()   # 仅在出现海量不同合法凭据时（正常 1 条）
+            _auth_cache[key] = (fp, now + _AUTH_CACHE_TTL)
+    return ok
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -88,7 +125,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         auth = request.headers.get("authorization", "")
 
         # 管理员：凭据有效 → 全放行
-        if _basic_ok(auth, self.admin_user, self.admin_hash):
+        if _basic_ok_cached(auth, self.admin_user, self.admin_hash):
             return await call_next(request)
 
         # 有凭据但无效 → 401（不降级为游客，防伪装）
