@@ -270,7 +270,7 @@ def storage_page(refresh: bool = False) -> dict:
     # ---- 孤儿对象 ----
     orphans, orphan_bytes = [], 0
     if view["available"]:
-        remote = r2.objects_all() or {}
+        remote = r2.objects_all(force=refresh) or {}
         for book, objs in remote.items():
             if book not in local_map:
                 for rel, size in sorted(objs.items()):
@@ -323,7 +323,7 @@ def storage_gc(keys: list) -> dict:
 
     local_map = {b["name"]: _final_files(b.get("files") or {}) for b in scan_books()}
     local_map = {k: v for k, v in local_map.items() if v}
-    remote = r2.objects_all()
+    remote = r2.objects_all(force=True)
     if remote is None:
         return {"deleted": 0, "refused": [], "error": "R2 读不到，已放弃清理（不冒删错的风险）"}
 

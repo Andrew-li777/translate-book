@@ -187,12 +187,21 @@ def book_objects(book: str):
     return out
 
 
-def objects_all():
+OBJ_TTL = 30             # 秒；存储页打开时复用列举结果（P1-3，GC 路径用 force 绕过）
+_objs = {"ts": 0.0, "data": None}
+
+
+def objects_all(force: bool = False):
     """列 books/ 前缀下**全部**对象 → {书名: {相对路径: 字节数}}。
 
     未配置 / 读不到 → None（调用方须区分「空桶」与「不可用」）。
     只打一次 R2；fast 客户端（短超时、不重试）。
+    P1-3：结果 30s 内复用（失败不缓存）；force=True 强制刷新——GC 删前复核必须用。
     """
+    import time as _t
+    now = _t.time()
+    if not force and _objs["data"] is not None and now - _objs["ts"] < OBJ_TTL:
+        return _objs["data"]
     s3, bucket = _client(fast=True)
     if s3 is None:
         return None
@@ -209,6 +218,7 @@ def objects_all():
     except Exception as e:
         log.warning("列举 R2 对象失败: %s", e)
         return None
+    _objs.update({"ts": now, "data": out})
     return out
 
 

@@ -19,7 +19,7 @@ JOBS_ROOT = WORK_ROOT / "jobs"
 
 # 允许上传的类型
 ALLOWED_EXTS = {".pdf", ".docx", ".epub"}
-MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100MB
+MAX_UPLOAD_BYTES = 95 * 1024 * 1024  # 95MB —— P1-2：CF 免费版请求体上限 100MB，留 multipart 开销余量
 
 # 状态机合法迁移（宽松：允许任何更新，校验放业务层）
 STATUS_ALL = {"pending", "converting", "ready", "translating", "merging",
@@ -92,13 +92,32 @@ def _write_json(fp: Path, obj: dict) -> None:
 
 
 def save_input(job_id: str, data: bytes) -> Path:
-    """保存上传文件到 job 目录，返回路径"""
+    """保存上传文件到 job 目录，返回路径（旧接口，保留；web 上传已改为流式落盘）"""
     job = get_job(job_id)
     if job is None:
         raise ValueError(f"任务不存在: {job_id}")
     fp = _job_dir(job_id) / job["filename"]
     fp.write_bytes(data)
     return fp
+
+
+def input_target(job_id: str) -> Path:
+    """上传落盘目标路径（<job_dir>/<filename>），供流式写入（P2-1）"""
+    job = get_job(job_id)
+    if job is None:
+        raise ValueError(f"任务不存在: {job_id}")
+    return _job_dir(job_id) / job["filename"]
+
+
+def discard(job_id: str) -> None:
+    """上传失败清理：移除整个任务目录（best-effort，绝不抛出）"""
+    try:
+        d = _job_dir(job_id)
+    except ValueError:
+        return
+    if d.exists():
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def get_job(job_id: str) -> dict | None:

@@ -22,6 +22,7 @@ import jobs
 import r2
 import render_cache
 import settings
+import thumbs
 from auth import AuthMiddleware, load_admin_cred
 from guest_rules import guest_read_allowed
 
@@ -148,6 +149,19 @@ def api_file(name: str, path: str, raw: bool = Query(False)):
         return FileResponse(fp, media_type=_IMG_MIME[fp.suffix.lower()], headers=_IMG_CACHE)
     return Response(fp.read_bytes(), media_type=_DOWNLOAD_MIME.get(fp.suffix.lower(), "application/octet-stream"),
                     headers={"Content-Disposition": f'attachment; filename="{fp.name}"'})
+
+
+@app.get("/api/books/{name}/thumb/{path:path}")
+def api_thumb(name: str, path: str):
+    """P1b：插图缩略图（最长边 1600px JPEG）——首次按需生成，之后直接复用。"""
+    src = books.resolve_file(name, path)
+    if src is None or src.suffix.lower() not in _IMG_MIME:
+        raise HTTPException(404, "图片不存在")
+    dst = thumbs.thumb_for(name, path, src)
+    if dst is None:
+        # 降级：缩略图不可用时回退原图（保可用性）
+        return FileResponse(src, media_type=_IMG_MIME[src.suffix.lower()], headers=_IMG_CACHE)
+    return FileResponse(dst, media_type="image/jpeg", headers=_IMG_CACHE)
 
 
 @app.get("/api/books/{name}/render/{path:path}")
@@ -340,18 +354,34 @@ async def api_storage_gc(payload: dict):
 @app.post("/api/upload")
 async def api_upload(file: UploadFile = File(...), title: str = Form(""),
                      target_lang: str = Form("zh")):
-    """上传书 → 建任务 → 后台线程 convert"""
+    """上传书 → 建任务 → 后台线程 convert（P2-1：分块流式落盘，不再整文件读进内存）"""
     ext = Path(file.filename or "").suffix.lower()
     if ext not in jobs.ALLOWED_EXTS:
         raise HTTPException(400, f"不支持的类型 {ext or '(无扩展名)'}，仅支持 PDF/DOCX/EPUB")
-    data = await file.read()
-    if not data:
-        raise HTTPException(400, "文件为空")
-    if len(data) > jobs.MAX_UPLOAD_BYTES:
-        raise HTTPException(413, f"文件超过 {jobs.MAX_UPLOAD_BYTES // (1024*1024)}MB 上限")
     t = title.strip() or (Path(file.filename).stem if file.filename else "book")
     job = jobs.create_job(t, ext, target_lang)
-    jobs.save_input(job["id"], data)
+    fp = jobs.input_target(job["id"])
+    size = 0
+    try:
+        with fp.open("wb") as f:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > jobs.MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, f"文件超过 {jobs.MAX_UPLOAD_BYTES // (1024*1024)}MB 上限")
+                f.write(chunk)
+    except HTTPException:
+        jobs.discard(job["id"])
+        raise
+    except Exception as e:
+        jobs.discard(job["id"])
+        log.warning("上传落盘失败: %s", e)
+        raise HTTPException(500, "上传写入失败，请重试")
+    if size == 0:
+        jobs.discard(job["id"])
+        raise HTTPException(400, "文件为空")
     jobs.update_job(job["id"], status="converting")
     jobs.write_progress(job["id"], "converting", "开始转换...")
     threading.Thread(target=_convert_worker, args=(job["id"],), daemon=True).start()

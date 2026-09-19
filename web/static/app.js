@@ -549,14 +549,15 @@ async function saveGlossary(name){
 /* ===== 插图 ===== */
 async function loadImages(name){
   const p = $('p-img');
-  const imgs = await api(`/api/books/${name}/file/images/.`).catch(()=>null);
   // 简版：逐个尝试常见编号（images/000001.png ...），未知数量时用占位提示
   const list = await api(`/api/books/${name}`).catch(()=>null);
   const n = list && list.images ? list.images : 0;
   if(!n){ p.innerHTML='<div class="empty-hint">无插图</div>'; return; }
   const items = [];
   for(let i=1;i<=n && i<=200;i++){
-    items.push(`<img loading="lazy" onclick="window.open(this.src)" src="/api/books/${name}/file/images/${String(i).padStart(6,'0')}.png" onerror="this.style.display='none'">`);
+    const f = String(i).padStart(6,'0');
+    // P1b：网格走 1600px 缩略图（快），点击打开原图
+    items.push(`<img loading="lazy" onclick="window.open('/api/books/${name}/file/images/${f}.png')" src="/api/books/${name}/thumb/images/${f}.png" onerror="this.style.display='none'">`);
   }
   p.innerHTML = `<div class="img-grid">${items.join('')}</div>`;
 }
