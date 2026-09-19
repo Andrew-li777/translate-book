@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 
 import boto3
+from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
@@ -20,6 +21,21 @@ _CRED_FILE = Path("/root/.translate-r2-cred")
 R2_EXTS = {".pdf", ".docx", ".epub"}
 R2_PREFIX = "books"
 PRESIGN_TTL = 900  # 秒
+
+# ⚠️ 本机出网只有 ~1Mbps（≈110KB/s），必须用「单分片串行」上传：
+#   boto3 默认 max_concurrency=10 —— 10 个分片抢 110KB/s，每个分片只分到 ~10KB/s，
+#   8MB 分片要 800s，远超 read_timeout → 服务端直接切断连接（"Connection was closed
+#   before we received a valid response"），大文件（>multipart_threshold）必然失败。
+# 实测：53.5MB / 42.5MB 两个大文件在默认并发下失败，小文件（单请求）全部成功。
+# 因此固定 max_concurrency=1 + 放大 read_timeout；单分片 8MB 仅需 ~78s。
+MULTIPART_THRESHOLD = 8 * 1024 * 1024
+MULTIPART_CHUNKSIZE = 8 * 1024 * 1024
+_UPLOAD_CFG = TransferConfig(
+    multipart_threshold=MULTIPART_THRESHOLD,
+    multipart_chunksize=MULTIPART_CHUNKSIZE,
+    max_concurrency=1,
+    use_threads=False,
+)
 
 
 def _load_cred() -> dict:
@@ -52,9 +68,9 @@ def _client():
             region_name="auto",
             config=Config(
                 signature_version="s3v4",
-                retries={"max_attempts": 3, "mode": "standard"},
-                connect_timeout=10,
-                read_timeout=120,
+                retries={"max_attempts": 5, "mode": "standard"},
+                connect_timeout=30,
+                read_timeout=600,
             ),
         )
         return s3, c["R2_BUCKET"]
@@ -93,7 +109,7 @@ def upload(book: str, rel_path: str, local: Path) -> bool:
     except Exception as e:
         log.warning("head_object 异常 %s: %s", key, e)
     try:
-        s3.upload_file(str(local), bucket, key)
+        s3.upload_file(str(local), bucket, key, Config=_UPLOAD_CFG)
         return True
     except Exception as e:
         log.warning("上传失败 %s: %s", key, e)
