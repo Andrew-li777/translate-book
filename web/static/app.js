@@ -863,6 +863,14 @@ function renderStoragePage(){
       <tbody>${rows || '<tr><td colspan="4" style="text-align:center;color:var(--ink-soft)">暂无成品</td></tr>'}</tbody>
     </table>
     <div class="st-sec">
+      <h3>容量趋势 · 近 30 天</h3>
+      <div class="kicker" style="color:var(--ink-soft);margin-bottom:8px">
+        只统计 <b>trs 自己</b>（工作区 + R2 成品），不含 scan；由归档守护每日采样一次，R2 读不到的当天断线（不画假跌）。
+        下载签发累计 <b>${(d.stats && d.stats.count) || 0}</b> 次（服务端自记，近似下载量）。
+      </div>
+      ${trendChart(d.history)}
+    </div>
+    <div class="st-sec">
       <h3>孤儿对象 · ORPHANS</h3>
       <div class="kicker" style="color:var(--ink-soft);margin-bottom:6px">
         R2 上有、本地已不该有的对象 —— 删书/清空回收站后遗留，或成品被重建过。
@@ -909,6 +917,47 @@ async function gcOrphans(){
     alert(`已删除 ${d.deleted} 个孤儿对象` + (ref ? `；${ref} 个被拒绝（${(d.refused||[]).map(x=>x.why).join('；')}）` : ''));
     await reloadStorage(true);
   }catch(e){ alert('清理失败：'+(e.message||e)); }
+}
+
+/* ===== S6-B: 容量趋势迷你图（内联 SVG，无新依赖）===== */
+function trendChart(hist){
+  const pts = hist || [];
+  if(!pts.length) return '<div class="kicker" style="color:var(--ink-soft)">尚无采样数据 —— 归档守护每日记录一次，明天起可见</div>';
+  const W = 520, H = 120, PAD = 6;
+  const series = [
+    {k:'trs_bytes', label:'trs 工作区', cls:'s1'},
+    {k:'r2_bytes',  label:'R2 归档',    cls:'s2'},
+  ];
+  let maxV = 0;
+  pts.forEach(r => series.forEach(s => { const v = r[s.k]; if(typeof v === 'number' && v > maxV) maxV = v; }));
+  if(maxV <= 0) maxV = 1;
+  const n = pts.length;
+  const X = i => PAD + (W - 2*PAD) * (n === 1 ? 0.5 : i/(n-1));
+  const Y = v => H - PAD - (H - 2*PAD) * (v / maxV);
+  const paths = series.map(s => {
+    const segs = []; let cur = [];
+    pts.forEach((r, i) => {
+      const v = r[s.k];
+      if(typeof v === 'number'){ cur.push(`${X(i).toFixed(1)},${Y(v).toFixed(1)}`); }
+      else if(cur.length){ segs.push(cur); cur = []; }      // R2 读不到的当天 → 断线（不画假跌）
+    });
+    if(cur.length) segs.push(cur);
+    return segs.map(pg => pg.length > 1
+      ? `<polyline class="ts ${s.cls}" points="${pg.join(' ')}"/>`
+      : `<circle class="ts-dot ${s.cls}" cx="${pg[0].split(',')[0]}" cy="${pg[0].split(',')[1]}" r="2.5"/>`
+    ).join('');
+  }).join('');
+  const first = pts[0].date || '', last = pts[n-1].date || '';
+  return `<div class="trend">
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="trend-svg">
+      <line class="ts-axis" x1="${PAD}" y1="${H-PAD}" x2="${W-PAD}" y2="${H-PAD}"/>
+      ${paths}
+    </svg>
+    <div class="trend-foot">
+      <span class="kicker">${esc(first)} → ${esc(last)} · ${n} 天</span>
+      <span class="kicker">峰值 ${fmt(maxV)}</span>
+      <span class="kicker"><i class="lg s1"></i>trs 工作区<i class="lg s2" style="margin-left:10px"></i>R2 归档</span>
+    </div></div>`;
 }
 
 /* ===== 启动 ===== */

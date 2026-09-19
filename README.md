@@ -19,7 +19,7 @@
 | **任务** | 队列管理（状态徽章/进度条/取消/单选全选删除），SSE 秒级实时进度，点击展开详情（失败给出具体原因） |
 | **自动翻译** | Hermes cron 每 3 分钟增量翻译（3 块并行），断点续译、绝不重复翻译，全书完成自动合并 |
 | **书库** | 藏书网格/侧栏列表、单选全选删除、回收站（恢复/清空）；**存储分工可视化**：顶部汇总条（本地 N 成品 X MB ｜ R2 N 对象 Y MB ｜ 差异）、每本书 R2 徽章（✓ 已同步 / ⚠ 缺·尺寸不符 / — 未配置 / ? 读不到）|
-| **存储页** | 侧栏「▦ 存储 · STORAGE」（仅管理员）：**逐书三列对照**（本地 / R2 / 差异逐项）、**孤儿对象一键清理**（本地已不该有的远端副本）、容量汇总（工作区占用 / 磁盘 / R2 免费额度条）|
+| **存储页** | 侧栏「▦ 存储 · STORAGE」（仅管理员）：**逐书三列对照**（本地 / R2 / 差异逐项）、**孤儿对象一键清理**（本地已不该有的远端副本）、容量汇总（工作区占用 / 磁盘 / R2 免费额度条）、**近 30 天容量趋势图**（只统计 trs 自己）|
 | **查看** | 章节对照阅读（原文+译文，同步滚动）、markdown 渲染、图片查看、元数据 |
 | **下载** | 5 格式成品一键下载；**成品走 Cloudflare R2 预签名 URL**（省 VPS 出网流量、PDF 不进浏览器内存），R2 不可用自动回退本地直连；下载时 **toast 明示本次走 R2 还是本地（含原因）**，管理员可一键「强制本地下载」排障（免重启）|
 | **术语表** | 每书独立术语表，**保存即触发全书重译**（专有名词可控） |
@@ -42,8 +42,10 @@
 存储页/下载源（S2/S4）：GET /api/storage（逐书三列 + 孤儿 + 容量）· POST /api/storage/gc（清理孤儿，删前复核）
                         GET/POST /api/settings（force_local_download，改完免重启）
 
-归档守护（S3）：Hermes no_agent cron 每 30 分钟跑 web/r2_alert.py
-                差异/不可达持续 ≥30min → 输出告警（stdout 原样投递 QQ）；正常 → stdout 为空 = 零打扰
+归档守护（S3+S6）：Hermes no_agent cron 每 30 分钟跑 web/r2_alert.py
+                5 个条件（归档差异 / R2 读不到 / 磁盘>85% / R2 额度>80% / 采样断更>36h）
+                异常持续 ≥30min → 合并成一条告警（stdout 原样投递 QQ）；正常 → stdout 为空 = 零打扰
+                顺带每日写一行容量采样（work/.storage_history.jsonl，只统计 trs）
 ```
 
 - **translate-web**：FastAPI 单页应用（systemd `translate-web.service`，自启+自愈）
@@ -121,7 +123,7 @@ cat /root/translate/work/jobs/*/job.json     # 任务状态
 5. **无需任何操作**：cron 自动翻译（每 3 分钟 3 块），书库出现后即可浏览/对照
 6. 全书完成后自动合并 → 详情页下载 5 格式成品
 7. 想改专有名词译法？详情页「术语表」tab 编辑保存 → 自动触发重译
-8. 想核对「本地 / R2 到底同步了没有」？侧栏「**▦ 存储 · STORAGE**」（管理员）→ 逐书三列对照 + 孤儿对象清理 + 容量汇总；**异常会自动推给你**（归档守护 cron，差异持续 ≥30 分钟才提醒，恢复正常再通知一次）
+8. 想核对「本地 / R2 到底同步了没有」？侧栏「**▦ 存储 · STORAGE**」（管理员）→ 逐书三列对照 + 孤儿对象清理 + 容量汇总 + **近 30 天容量趋势图**；**异常会自动推给你**（归档守护 cron：归档差异 / R2 读不到 / 磁盘 >85% / R2 额度 >80% / 采样断更，持续 ≥30 分钟才提醒，恢复正常再通知一次）
 
 ## 配置说明
 
@@ -131,12 +133,14 @@ cat /root/translate/work/jobs/*/job.json     # 任务状态
 | Caddy | `/etc/caddy/Caddyfile` | 双站反代（trs→8788 / :8080→8787），**只转发不做认证** |
 | Cloudflare | 控制台 Origin Rules | Hostname→8080（**必须 Hostname 字段**） |
 | cron | Hermes `ab9ef9653179` | 每 3 分钟，prompt 含「超时安全：output 落盘后下轮 record_only 续译」 |
-| cron（归档守护）| Hermes `5a2841fafa9d`（`no_agent`）| 每 30 分钟跑 `/root/.hermes/scripts/translate_r2_alert.sh` → `web/r2_alert.py`；**正常时零输出=零打扰**，异常持续 ≥30min 才推送、恢复正常再发一条「已恢复」|
+| cron（归档守护）| Hermes `5a2841fafa9d`（`no_agent`）| 每 30 分钟跑 `/root/.hermes/scripts/translate_r2_alert.sh` → `web/r2_alert.py`；**5 个条件**（归档差异 / R2 读不到 / 磁盘>85% / R2 额度>80% / 采样断更>36h），**多条件合并成一条**；**正常时零输出=零打扰**，异常持续 ≥30min 才推送、恢复正常发一条「已恢复」；顺带每日采样 |
 | LLM（网关） | Hermes config `model:` | 主通道 **deepseek 官方 / deepseek-v4-flash，reasoning medium**；fallback 首位 ark |
 | LLM（D 引擎） | `web/translate_direct.py` 的 `PROVIDERS` | 首位 **deepseek 官方 flash**（key 走 `/root/.hermes/.env` 的 `DEEPSEEK_API_KEY`），**ark / amd 兜底**；⚠️ 官方为**付费**通道（单 chunk ≈2.2k tokens），省费可调顺序（问题 #29、v5.6）|
 | R2 凭证（E 方案）| `/root/.translate-r2-cred`（chmod 600）| `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET=translate-archive`；**留空则成品自动走本地直连**（不影响下载）。当前已归档 **12/12 成品 / 207.4 MB** |
 | R2 同步 | systemd `translate-r2sync.timer`（**已启用**，15 分钟增量）| 幂等上传成品（同尺寸跳过）；手动跑：`book/.venv/bin/python web/r2_sync.py`。**判断归档是否完成要对账**：`/root/scripts/r2_reconcile.py`（列远端比尺寸）——`r2_sync.py --dry-run` **只列本地待传文件、不查远端**，别用它判归档（问题 #32）|
 | 运行期设置 | `work/.web_settings.json` | `force_local_download`（下载强制走本地，排障用）；改法：存储页开关或 `POST /api/settings`，**改完立即生效、无需重启** |
+| 容量采样 | `work/.storage_history.jsonl` | 守护脚本**每日首次运行**写一行（`trs_bytes` 只统计 trs 工作区 + R2 成品数/字节 + 下载签发数；保留 180 天）；手动补采样：`book/.venv/bin/python web/r2_alert.py --force-sample` |
+| 下载计数 | `work/.web_stats.json` | `presign_count`（服务端自记的预签名签发次数，近似下载量；预签名是本地计算、不产生 R2 API 调用）|
 
 ## 已知问题与维护
 
@@ -145,7 +149,9 @@ cat /root/translate/work/jobs/*/job.json     # 任务状态
 - **R2 上传必须单分片串行**：本机出网仅 ~1Mbps（~110KB/s），boto3 默认 `max_concurrency=10` 会让 >8MB 的文件超时断连（问题 #31）——`web/r2.py` 已固定 `max_concurrency=1` + `use_threads=False` + `read_timeout=600`，**改上传逻辑时勿动这几个参数**
 - **merge 勿用 `--cleanup`**：会删 chunk 文件，查看器对照 tab 依赖它们
 - **孤儿对象只识别、不自动删**：存储页的清理按钮**每次都会重新核对远端**（本地存在同名成品一律拒绝删除），自动删远端副本的收益不值风险——要清就人工点一次（经验总结 #28）
-- **归档守护有 30 分钟观察期**：差异持续 ≥30 分钟才推送 → 发现延迟最长约 60 分钟（属设计取舍：宁可晚，不要误报）；想立刻确认状态就跑 `book/.venv/bin/python web/r2_alert.py --json`
+- **归档守护有 30 分钟观察期**：异常持续 ≥30 分钟才推送 → 发现延迟最长约 60 分钟（属设计取舍：宁可晚，不要误报）；监护 **5 个条件**（归档差异 / R2 读不到 / 磁盘>85% / R2 额度>80% / 采样断更>36h），**多条件合并成一条消息**；想立刻确认状态就跑 `book/.venv/bin/python web/r2_alert.py --json`
+- **磁盘告警是机器级、趋势只统计 trs**：`disk` 条件看的是整盘 40GB（盘满会连带 trs/scan 全挂）；存储页趋势图按用户要求**只画 trs 自己**（工作区 + R2 成品），不含 scan
+- **公网看新版要认对 URL**：用户入口 `/` 是 `cf-cache-status: DYNAMIC`（不缓存）→ 部署即时可见；但 `/static/index.html` **直链**会被 CF 缓存（`max-age=14400`）→ 别拿它验版本（问题 #35）
 - **内存**：3.8GB 服务器，勿同时跑 scan 重型解析 + 全书重译
 - 完整坑位记录见 `迭代文档/问题记录.md`
 

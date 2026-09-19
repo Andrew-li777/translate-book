@@ -200,6 +200,34 @@ def _disk_info() -> dict:
         return {"total": 0, "used": 0, "free": 0, "pct": 0}
 
 
+# ===================== S6-B: 容量趋势（历史由 r2_alert.py 每日采样写入）=====================
+HIST_FP = Path("/root/translate/work/.storage_history.jsonl")
+HIST_POINTS = 30          # 趋势图展示最近 N 个采样点
+
+
+def read_history(limit: int = HIST_POINTS) -> list:
+    """读采样历史（JSONL，一行一天）。文件缺失/某行损坏都只影响该行，绝不抛异常。
+
+    每行：{date, trs_bytes, local_files, local_bytes, r2_objects, r2_bytes, presign}
+    R2 不可达的当天，r2_* 写 None（**不能写 0**，否则趋势图会出现假跌）。
+    """
+    rows = []
+    try:
+        for line in HIST_FP.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except Exception:
+                continue
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        log.warning("读取容量历史失败: %s", e)
+    return rows[-limit:]
+
+
 def storage_page(refresh: bool = False) -> dict:
     """存储页数据：逐书三列对照 + 孤儿对象 + 容量汇总（管理员端点用）。
 
@@ -265,7 +293,17 @@ def storage_page(refresh: bool = False) -> dict:
         "orphans": orphans, "orphan_bytes": orphan_bytes,
         "disk": _disk_info(), "work_bytes": _dir_bytes(WORK_ROOT),
         "quota_bytes": R2_FREE_QUOTA,
+        "history": read_history(),
+        "stats": _presign_stats(),
     }
+
+
+def _presign_stats() -> dict:
+    try:
+        import settings
+        return settings.presign_stats()
+    except Exception:
+        return {"count": 0, "last": 0}
 
 
 def storage_gc(keys: list) -> dict:

@@ -11,6 +11,7 @@
 """
 import json
 import logging
+import time
 from pathlib import Path
 
 log = logging.getLogger("settings")
@@ -46,3 +47,35 @@ def save(patch: dict) -> dict:
 
 def force_local() -> bool:
     return bool(load().get("force_local_download"))
+
+
+# ===================== 下载计数（S6-B：服务端自记，近似下载量）=====================
+# 说明：预签名 URL 是**本地计算**，不产生 R2 API 调用，因此真实用量只能接
+# CF GraphQL Analytics（需 API Token）。这里自记「签发次数」作为近似指标。
+_STATS_FP = Path("/root/translate/work/.web_stats.json")
+
+
+def _stats_load() -> dict:
+    try:
+        d = json.loads(_STATS_FP.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def bump_presign() -> None:
+    """签发一次 R2 预签名 URL 计数 +1（永不抛异常，绝不影响下载）"""
+    try:
+        d = _stats_load()
+        d["presign_count"] = int(d.get("presign_count", 0)) + 1
+        d["presign_last"] = time.time()
+        _STATS_FP.parent.mkdir(parents=True, exist_ok=True)
+        _STATS_FP.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        log.warning("下载计数写入失败: %s", e)
+
+
+def presign_stats() -> dict:
+    d = _stats_load()
+    return {"count": int(d.get("presign_count", 0)),
+            "last": d.get("presign_last") or 0}

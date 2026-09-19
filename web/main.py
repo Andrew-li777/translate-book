@@ -250,6 +250,7 @@ def api_download_link(name: str, path: str):
     else:
         url = r2.presign(name, path, fp.name)
         if url:
+            settings.bump_presign()      # S6-B：自记签发次数（近似下载量），失败不影响下载
             log.info("下载走 R2: %s/%s", name, path)
             return {"url": url, "expires_in": r2.PRESIGN_TTL, "source": "r2"}
         reason = "presign_failed"
