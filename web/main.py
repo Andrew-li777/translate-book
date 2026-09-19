@@ -60,6 +60,8 @@ _TEXT_MIME = {
 _IMG_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
              ".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp",
              ".bmp": "image/bmp"}
+# P1a：图片显式声明可缓存 → CF 边缘 + 浏览器 4h；配合 CF Cache Rule 使登录态请求也能入边缘缓存
+_IMG_CACHE = {"Cache-Control": "public, max-age=14400"}
 _DOWNLOAD_MIME = {
     ".pdf": "application/pdf", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".epub": "application/epub+zip", ".zip": "application/zip", ".mp3": "audio/mpeg",
@@ -143,7 +145,7 @@ def api_file(name: str, path: str, raw: bool = Query(False)):
         return Response(_absolutize_img_src(raw_html, name).encode("utf-8"),
                         media_type="text/html; charset=utf-8")
     if fp.suffix.lower() in _IMG_MIME:
-        return FileResponse(fp, media_type=_IMG_MIME[fp.suffix.lower()])
+        return FileResponse(fp, media_type=_IMG_MIME[fp.suffix.lower()], headers=_IMG_CACHE)
     return Response(fp.read_bytes(), media_type=_DOWNLOAD_MIME.get(fp.suffix.lower(), "application/octet-stream"),
                     headers={"Content-Disposition": f'attachment; filename="{fp.name}"'})
 
@@ -304,7 +306,7 @@ def api_cover(name: str):
     fp = books.resolve_file(name, "images/000001.png")
     if fp is None:
         raise HTTPException(404, "无封面")
-    return FileResponse(fp, media_type="image/png")
+    return FileResponse(fp, media_type="image/png", headers=_IMG_CACHE)
 
 
 # ===================== S2: 存储页（本地 vs R2 逐书对照 + 孤儿清理） =====================
