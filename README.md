@@ -114,13 +114,14 @@ cat /root/translate/work/jobs/*/job.json     # 任务状态
 | cron | Hermes `ab9ef9653179` | 每 3 分钟，prompt 含「超时安全：output 落盘后下轮 record_only 续译」 |
 | LLM（网关） | Hermes config `model:` | 主通道 **deepseek 官方 / deepseek-v4-flash，reasoning medium**；fallback 首位 ark |
 | LLM（D 引擎） | `web/translate_direct.py` 的 `PROVIDERS` | ⚠️ 仍为 `[amd, ark]`——两跳当前均不可用（问题 #29），待补 deepseek 官方 |
-| R2 凭证（E 方案）| `/root/.translate-r2-cred`（chmod 600）| `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET`；**留空则成品自动走本地直连**（不影响下载）|
-| R2 同步 | systemd `translate-r2sync.timer` | 每 15 分钟幂等上传成品；手动：`book/.venv/bin/python web/r2_sync.py [--dry-run]` |
+| R2 凭证（E 方案）| `/root/.translate-r2-cred`（chmod 600）| `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET=translate-archive`；**留空则成品自动走本地直连**（不影响下载）。当前已归档 **12/12 成品 / 207.4 MB** |
+| R2 同步 | systemd `translate-r2sync.timer`（**已启用**，15 分钟增量）| 幂等上传成品（同尺寸跳过）；手动跑：`book/.venv/bin/python web/r2_sync.py`。**判断归档是否完成要对账**：`/root/scripts/r2_reconcile.py`（列远端比尺寸）——`r2_sync.py --dry-run` **只列本地待传文件、不查远端**，别用它判归档（问题 #32）|
 
 ## 已知问题与维护
 
 - **空尾 chunk**：PDF 末尾空白页会生成 0 字节 chunk，已打 `source_empty` 补丁（manifest/merge_and_build）
 - **本地成品文件不可删**：`books.py` 的 `_status()` 判 `done`、`_file_summary()` 出文件清单都依赖 `book.pdf/docx/epub` 的存在与大小——**R2 只是分发通道，不是备份**
+- **R2 上传必须单分片串行**：本机出网仅 ~1Mbps（~110KB/s），boto3 默认 `max_concurrency=10` 会让 >8MB 的文件超时断连（问题 #31）——`web/r2.py` 已固定 `max_concurrency=1` + `use_threads=False` + `read_timeout=600`，**改上传逻辑时勿动这几个参数**
 - **merge 勿用 `--cleanup`**：会删 chunk 文件，查看器对照 tab 依赖它们
 - **内存**：3.8GB 服务器，勿同时跑 scan 重型解析 + 全书重译
 - 完整坑位记录见 `迭代文档/问题记录.md`
