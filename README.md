@@ -46,6 +46,9 @@
                 5 个条件（归档差异 / R2 读不到 / 磁盘>85% / R2 额度>80% / 采样断更>36h）
                 异常持续 ≥30min → 合并成一条告警（stdout 原样投递 QQ）；正常 → stdout 为空 = 零打扰
                 顺带每日写一行容量采样（work/.storage_history.jsonl，只统计 trs）
+
+性能（v5.10）：auth 校验结果缓存（15min 滑动续期）· 渲染 LRU（render_cache.py）· 详情/书库共享 R2 快照
+                前端：打开书仅 1 请求（面板懒加载）· 网页预览点击加载 · 全站字号 6 级 token
 ```
 
 - **translate-web**：FastAPI 单页应用（systemd `translate-web.service`，自启+自愈）
@@ -70,6 +73,7 @@
 │   ├── r2_sync.py         # 成品幂等同步脚本（15 分钟 timer 调用）
 │   ├── r2_alert.py        # 归档守护（差异 ≥30min 告警；`--selftest` 可自检）
 │   ├── settings.py        # 运行期设置（force_local_download）
+│   ├── render_cache.py    # 渲染 LRU 缓存（md→HTML，v5.10）
 │   ├── config.py          # 常量
 │   └── static/            # 前端（index.html + app.js）
 ├── work/                  # 翻译工作区（运行数据，不入库）
