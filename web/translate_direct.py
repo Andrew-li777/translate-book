@@ -45,20 +45,28 @@ PYTHON = "/root/translate/book/.venv/bin/python"
 LOG_FP = WORK_ROOT / "direct.log"
 
 # ---- 通道配置（按顺序尝试，失败自动 fallback）----
-# amd 优先（免费 $1/天），触顶(429 Daily usage)后自动切 ark（火山方舟）。
-# 从 .env 读 key，不硬编码/不显示。模型名各通道不同，分别指定。
+# 默认 deepseek 官方 flash（2026-09-19 用户指定）：免费通道双失效期间唯一可用链路，
+# 实测 reasoning_effort=none 被接受（单句 0.7s / 22 tokens），与 D 引擎的 none 策略兼容。
+# 后两跳为免费通道兜底：ark（周配额 9/21 重置）、amd（$1/天，对话模型待恢复）。
+# 从 /root/.hermes/.env 读 key，不硬编码/不显示。模型名各通道不同，分别指定。
 PROVIDERS = [
     {
-        "name": "amd",
-        "url": "https://developer.amd.com.cn/radeon/api/v1/chat/completions",
-        "model": "DeepSeek-V4-Flash",
-        "key_name": "AMD_RADEON_API_KEY",
+        "name": "deepseek",
+        "url": "https://api.deepseek.com/v1/chat/completions",
+        "model": "deepseek-v4-flash",
+        "key_name": "DEEPSEEK_API_KEY",
     },
     {
         "name": "ark",
         "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
         "model": "deepseek-v4-flash",
         "key_name": "arkapikey",
+    },
+    {
+        "name": "amd",
+        "url": "https://developer.amd.com.cn/radeon/api/v1/chat/completions",
+        "model": "DeepSeek-V4-Flash",
+        "key_name": "AMD_RADEON_API_KEY",
     },
 ]
 # 当前生效通道（运行时可能因 fallback 切换）

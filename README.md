@@ -113,7 +113,7 @@ cat /root/translate/work/jobs/*/job.json     # 任务状态
 | Cloudflare | 控制台 Origin Rules | Hostname→8080（**必须 Hostname 字段**） |
 | cron | Hermes `ab9ef9653179` | 每 3 分钟，prompt 含「超时安全：output 落盘后下轮 record_only 续译」 |
 | LLM（网关） | Hermes config `model:` | 主通道 **deepseek 官方 / deepseek-v4-flash，reasoning medium**；fallback 首位 ark |
-| LLM（D 引擎） | `web/translate_direct.py` 的 `PROVIDERS` | ⚠️ 仍为 `[amd, ark]`——两跳当前均不可用（问题 #29），待补 deepseek 官方 |
+| LLM（D 引擎） | `web/translate_direct.py` 的 `PROVIDERS` | 首位 **deepseek 官方 flash**（key 走 `/root/.hermes/.env` 的 `DEEPSEEK_API_KEY`），**ark / amd 兜底**；⚠️ 官方为**付费**通道（单 chunk ≈2.2k tokens），省费可调顺序（问题 #29、v5.6）|
 | R2 凭证（E 方案）| `/root/.translate-r2-cred`（chmod 600）| `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET=translate-archive`；**留空则成品自动走本地直连**（不影响下载）。当前已归档 **12/12 成品 / 207.4 MB** |
 | R2 同步 | systemd `translate-r2sync.timer`（**已启用**，15 分钟增量）| 幂等上传成品（同尺寸跳过）；手动跑：`book/.venv/bin/python web/r2_sync.py`。**判断归档是否完成要对账**：`/root/scripts/r2_reconcile.py`（列远端比尺寸）——`r2_sync.py --dry-run` **只列本地待传文件、不查远端**，别用它判归档（问题 #32）|
 
