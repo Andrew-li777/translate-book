@@ -564,21 +564,23 @@ async function loadImages(name){
 /* ===== P3a: 上传 + 任务 ===== */
 async function doUpload(){
   const f = $('up-file').files[0];
-  const msg = $('up-msg');
+  const msg = $('up-msg'), btn = $('up-submit');
   if(!f){ msg.textContent = '请先选择文件'; return; }
   const fd = new FormData();
   fd.append('file', f);
   fd.append('title', $('up-title').value);
   fd.append('target_lang', $('up-lang').value);
   msg.textContent = '上传中…';
+  if(btn) btn.disabled = true;
   try{
     const r = await authFetch('/api/upload', {method:'POST', body:fd});
     const d = await r.json().catch(()=>({}));
     if(!r.ok){ msg.textContent = (d.detail||('HTTP '+r.status)); return; }
     msg.textContent = '已提交任务 ' + (d.job?d.job.id:'');
-    $('up-file').value = ''; $('up-title').value = '';
+    $('up-file').value = ''; $('up-title').value = ''; upFileChosen();
     loadJobs(); watchJob(d.job); setTimeout(loadJobs, 5000);
   }catch(e){ msg.textContent = '上传失败: '+e.message; }
+  finally{ if(btn) btn.disabled = false; }
 }
 async function loadJobs(){
   let jobs = [];
@@ -716,9 +718,36 @@ async function delSelectedJobs(){
   loadJobs(); loadTrash();
 }
 
-/* ===== 上传模态框 ===== */
-function openUploadModal(){ if(!requireLogin()) return; $('upload-modal').style.display='flex'; }
+/* ===== 上传模态框（任务4：拖拽上传区 + 档案风） ===== */
+function openUploadModal(){
+  if(!requireLogin()) return;
+  $('up-msg').textContent='';
+  upFileChosen();
+  $('upload-modal').style.display='flex';
+}
 function closeUploadModal(){ $('upload-modal').style.display='none'; $('up-msg').textContent=''; }
+function upFileChosen(file){
+  const inp = $('up-file'), el = $('up-file-name'), msg = $('up-msg');
+  const f = file || (inp && inp.files && inp.files[0]);
+  if(el) el.textContent = f ? `${f.name} · ${fmt(f.size)}` : '或点击选择文件';
+  if(f && msg){
+    const ext = (f.name.split('.').pop()||'').toLowerCase();
+    if(!['pdf','docx','epub'].includes(ext)) msg.textContent = '仅支持 PDF / DOCX / EPUB 格式';
+    else if(msg.textContent === '仅支持 PDF / DOCX / EPUB 格式') msg.textContent = '';
+  }
+}
+const UP_DZ = $('up-drop');
+if(UP_DZ){
+  ['dragenter','dragover'].forEach(ev=>UP_DZ.addEventListener(ev, e=>{ e.preventDefault(); UP_DZ.classList.add('drag'); }));
+  ['dragleave','drop'].forEach(ev=>UP_DZ.addEventListener(ev, e=>{ e.preventDefault(); UP_DZ.classList.remove('drag'); }));
+  UP_DZ.addEventListener('drop', e=>{
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if(!f) return;
+    const inp = $('up-file');
+    try{ const dt = new DataTransfer(); dt.items.add(f); inp.files = dt.files; }catch(err){}
+    upFileChosen(f);
+  });
+}
 
 /* ===== 折叠 ===== */
 function toggleJobs(){
@@ -853,7 +882,7 @@ function renderStoragePage(){
     const ok = r.synced;
     const r2txt = (d.available===false) ? '—' : `${r.r2_objects} 个 / ${fmt(r.r2_bytes)}`;
     return `<tr class="${ok?'':'st-bad'}">
-      <td><span class="mono" style="font-size:.72rem;cursor:pointer" onclick="openBook('${esc(r.name)}')">${esc(r.title)}</span></td>
+      <td><span class="mono" style="font-size:var(--fs-xs);cursor:pointer" onclick="openBook('${esc(r.name)}')">${esc(r.title)}</span></td>
       <td class="num">${r.local_files} 个<br>${fmt(r.local_bytes)}</td>
       <td class="num">${r2txt}${ok?'':'<br><span class="r2-tag warn">不一致</span>'}</td>
       <td class="num">${ok? '<span class="r2-tag ok">✓ 同步</span>' : esc(diff.join('；'))}</td>
