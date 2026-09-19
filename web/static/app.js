@@ -357,7 +357,11 @@ async function openBook(name){
 function loadDocPreview(name){
   const slot = $('doc-preview-slot');
   if(!slot) return;
-  slot.innerHTML = `<iframe class="doc-preview" src="/api/books/${name}/file/book.html?raw=1"></iframe>`;
+  // P2-2：书已同步且开关开启 → iframe 直连 R2（同步时已注入懒加载）；否则走本地渲染管线
+  const src = (CUR_B && CUR_B.preview_base)
+    ? `${CUR_B.preview_base}/books/${name}/book.html`
+    : `/api/books/${name}/file/book.html?raw=1`;
+  slot.innerHTML = `<iframe class="doc-preview" src="${src}"></iframe>`;
 }
 async function loadMd(panel, path, name){
   const p = $(`p-${panel}`);
@@ -553,11 +557,13 @@ async function loadImages(name){
   const list = await api(`/api/books/${name}`).catch(()=>null);
   const n = list && list.images ? list.images : 0;
   if(!n){ p.innerHTML='<div class="empty-hint">无插图</div>'; return; }
+  const pbase = (list && list.preview_base) ? list.preview_base : '';
   const items = [];
   for(let i=1;i<=n && i<=200;i++){
     const f = String(i).padStart(6,'0');
-    // P1b：网格走 1600px 缩略图（快），点击打开原图
-    items.push(`<img loading="lazy" onclick="window.open('/api/books/${name}/file/images/${f}.png')" src="/api/books/${name}/thumb/images/${f}.png" onerror="this.style.display='none'">`);
+    // P1b：网格走 1600px 缩略图；P2-2：书已同步时「打开原图」走 R2 公共域直链
+    const full = pbase ? `${pbase}/books/${name}/images/${f}.png` : `/api/books/${name}/file/images/${f}.png`;
+    items.push(`<img loading="lazy" onclick="window.open('${full}')" src="/api/books/${name}/thumb/images/${f}.png" onerror="this.style.display='none'">`);
   }
   p.innerHTML = `<div class="img-grid">${items.join('')}</div>`;
 }
@@ -844,6 +850,22 @@ async function setForceLocal(on){
     renderStoragePage();
   }catch(e){ alert('设置失败：'+(e.message||e)); }
 }
+async function setPreviewR2(on){
+  if(!requireLogin()) return;
+  if(on && !(ST_SET && ST_SET.preview_base)){
+    alert('还不能开启：预览公共域（preview_base）未配置。请先完成 R2 预览桶与公共域设置。');
+    return;
+  }
+  try{
+    const r = await authFetch('/api/settings', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({preview_r2: !!on})});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok){ alert(d.detail || ('HTTP '+r.status)); return; }
+    ST_SET = d;
+    toast(on ? '预览已切到 R2 公共域（book.html 与图片不再吃服务器出网）' : '预览已回滚本地直连', on ? 'ok' : 'warn');
+    renderStoragePage();
+  }catch(e){ alert('设置失败：'+(e.message||e)); }
+}
 function renderStoragePage(){
   const d = ST_PAGE, t = d.totals, c = $('content');
   const disk = d.disk || {};
@@ -906,6 +928,9 @@ function renderStoragePage(){
         <span class="r2-tag ${(ST_SET && ST_SET.force_local_download) ? 'off' : 'ok'}" title="当前成品下载实际走的路径">下载源：${(ST_SET && ST_SET.force_local_download) ? '本地直连' : (d.available ? 'R2 预签名' : '本地直连（回退）')}</span>
         <label class="kicker" style="cursor:pointer" title="打开后所有成品下载都跳过 R2、走服务器本地直连 —— 用于排障：怀疑 R2 链路有问题时可一键切换验证">
           <input type="checkbox" ${(ST_SET && ST_SET.force_local_download) ? 'checked' : ''} onchange="setForceLocal(this.checked)"> 强制本地下载
+        </label>
+        <label class="kicker" style="cursor:pointer" title="预览资源（book.html/图片）从 R2 公共域加载，服务器出网零占用；关闭即回滚本地直连。公共域：${esc((ST_SET && ST_SET.preview_base) || '未配置')} · 已同步 ${(d.preview && d.preview.synced_books) || 0} 本">
+          <input type="checkbox" ${(ST_SET && ST_SET.preview_r2) ? 'checked' : ''} onchange="setPreviewR2(this.checked)"> 预览走 R2
         </label>
         <span class="kicker">${(d.rows||[]).length} 本有成品</span>
       </span>

@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 import books
 import config
 import jobs
+import preview
 import r2
 import render_cache
 import settings
@@ -98,6 +99,9 @@ def api_book(name: str):
     st = books.storage_view(books.scan_books())
     b["r2"] = st["books"].get(name, {})
     b["storage"] = {"configured": st["configured"], "available": st["available"]}
+    # P2-2：该书预览资源已同步 R2 且开关开启 → 前端「打开原图」用公共域直链
+    _pb = preview.base()
+    b["preview_base"] = _pb if (_pb and preview.ready(name)) else ""
     return b
 
 
@@ -143,7 +147,8 @@ def api_file(name: str, path: str, raw: bool = Query(False)):
     # 图片相对路径重写为绝对路径（经 file 端点），修复 iframe 内裂图
     if fp.suffix.lower() == ".html":
         raw_html = fp.read_bytes().decode("utf-8", errors="replace")
-        return Response(_absolutize_img_src(raw_html, name).encode("utf-8"),
+        html_out = preview.rewrite(_absolutize_img_src(raw_html, name), name)
+        return Response(html_out.encode("utf-8"),
                         media_type="text/html; charset=utf-8")
     if fp.suffix.lower() in _IMG_MIME:
         return FileResponse(fp, media_type=_IMG_MIME[fp.suffix.lower()], headers=_IMG_CACHE)
@@ -180,6 +185,7 @@ def api_render(name: str, path: str):
         return _absolutize_img_src(html, name)
 
     html = render_cache.render(name, fp, _build)
+    html = preview.rewrite(html, name)      # P2-2：开关开且书已同步 → 图片走 R2 公共域
     return {"html": html, "name": fp.name, "path": path}
 
 
@@ -311,6 +317,10 @@ async def api_settings_post(payload: dict):
     after = settings.save(payload)
     if before.get("force_local_download") != after.get("force_local_download"):
         log.warning("下载源切换：force_local_download=%s", after.get("force_local_download"))
+    if (before.get("preview_r2"), before.get("preview_base")) != \
+            (after.get("preview_r2"), after.get("preview_base")):
+        log.warning("预览分发切换：preview_r2=%s base=%s",
+                    after.get("preview_r2"), after.get("preview_base"))
     return after
 
 

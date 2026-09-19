@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from config import WORK_ROOT
+import preview
 
 log = logging.getLogger("books")
 _TEMP_SUFFIX = "_temp"
@@ -295,6 +296,7 @@ def storage_page(refresh: bool = False) -> dict:
         "quota_bytes": R2_FREE_QUOTA,
         "history": read_history(),
         "stats": _presign_stats(),
+        "preview": preview.summary(),
     }
 
 

@@ -17,7 +17,7 @@ from pathlib import Path
 log = logging.getLogger("settings")
 
 _FP = Path("/root/translate/work/.web_settings.json")
-_DEFAULTS = {"force_local_download": False}
+_DEFAULTS = {"force_local_download": False, "preview_r2": False, "preview_base": ""}
 
 
 def load() -> dict:
@@ -37,6 +37,8 @@ def save(patch: dict) -> dict:
     d = load()
     d.update({k: v for k, v in (patch or {}).items() if k in _DEFAULTS})
     d["force_local_download"] = bool(d["force_local_download"])
+    d["preview_r2"] = bool(d["preview_r2"])
+    d["preview_base"] = str(d.get("preview_base") or "").strip().rstrip("/")
     try:
         _FP.parent.mkdir(parents=True, exist_ok=True)
         _FP.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
