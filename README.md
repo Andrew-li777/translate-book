@@ -20,7 +20,7 @@
 | **自动翻译** | Hermes cron 每 3 分钟增量翻译（3 块并行），断点续译、绝不重复翻译，全书完成自动合并 |
 | **书库** | 藏书网格/侧栏列表、单选全选删除、回收站（恢复/清空） |
 | **查看** | 章节对照阅读（原文+译文，同步滚动）、markdown 渲染、图片查看、元数据 |
-| **下载** | 5 格式成品一键下载 |
+| **下载** | 5 格式成品一键下载；**成品走 Cloudflare R2 预签名 URL**（省 VPS 出网流量、PDF 不进浏览器内存），R2 不可用自动回退本地直连 |
 | **术语表** | 每书独立术语表，**保存即触发全书重译**（专有名词可控） |
 | **搜索** | 全文搜索（译文/原文/全部），命中直接跳转对照阅读 |
 | **侧栏** | 可收起（localStorage 记忆） |
@@ -31,6 +31,9 @@
 ```
 浏览器 → Cloudflare(HTTPS) → Origin Rule(Hostname→8080) → Caddy(按 Host 分流) → :8788
                                                                     └→ :8787(scan)
+
+成品下载（E 方案）：前端 → GET /api/download/{name}/book.pdf → R2 预签名 URL → 顶级导航直下 R2
+                    （R2 未配置/失败 → 自动回退本地 /api/books/{name}/download/{path}）
 ```
 
 - **translate-web**：FastAPI 单页应用（systemd `translate-web.service`，自启+自愈）
@@ -111,10 +114,13 @@ cat /root/translate/work/jobs/*/job.json     # 任务状态
 | cron | Hermes `ab9ef9653179` | 每 3 分钟，prompt 含「超时安全：output 落盘后下轮 record_only 续译」 |
 | LLM（网关） | Hermes config `model:` | 主通道 **deepseek 官方 / deepseek-v4-flash，reasoning medium**；fallback 首位 ark |
 | LLM（D 引擎） | `web/translate_direct.py` 的 `PROVIDERS` | ⚠️ 仍为 `[amd, ark]`——两跳当前均不可用（问题 #29），待补 deepseek 官方 |
+| R2 凭证（E 方案）| `/root/.translate-r2-cred`（chmod 600）| `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET`；**留空则成品自动走本地直连**（不影响下载）|
+| R2 同步 | systemd `translate-r2sync.timer` | 每 15 分钟幂等上传成品；手动：`book/.venv/bin/python web/r2_sync.py [--dry-run]` |
 
 ## 已知问题与维护
 
 - **空尾 chunk**：PDF 末尾空白页会生成 0 字节 chunk，已打 `source_empty` 补丁（manifest/merge_and_build）
+- **本地成品文件不可删**：`books.py` 的 `_status()` 判 `done`、`_file_summary()` 出文件清单都依赖 `book.pdf/docx/epub` 的存在与大小——**R2 只是分发通道，不是备份**
 - **merge 勿用 `--cleanup`**：会删 chunk 文件，查看器对照 tab 依赖它们
 - **内存**：3.8GB 服务器，勿同时跑 scan 重型解析 + 全书重译
 - 完整坑位记录见 `迭代文档/问题记录.md`

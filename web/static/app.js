@@ -182,7 +182,20 @@ async function pollTick(){
 }
 async function dlFmt(name, ext){
   if(!isAdmin()){ openLoginModal(); return; }
-  const url = `/api/books/${name}/download/book.${ext}`;
+  const file = `book.${ext}`;
+  // 1) 先向后端要 R2 预签名链接（成品大文件走 R2，省 VPS 出网流量 + 不占浏览器内存）
+  let d = null;
+  try{
+    const r = await fetch(`/api/download/${encodeURIComponent(name)}/${file}`, { headers: _authHeaders() });
+    if(r.status === 401){ setAuth(''); updateAuthBadge(); openLoginModal(); return; }
+    if(r.ok) d = await r.json();
+  }catch(e){ /* 忽略，走本地回退 */ }
+
+  // 2) 有 R2 链接 → 顶级导航直下（浏览器直接写盘，几十 MB 的 PDF 不进 JS 内存）
+  if(d && d.url){ window.location.href = d.url; return; }
+
+  // 3) 回退：带凭据的 fetch + Blob（本地直连端点，原可靠路径）
+  const url = `/api/books/${encodeURIComponent(name)}/download/${file}`;
   try{
     const r = await fetch(url, { headers: _authHeaders() });
     if(r.status === 401){ setAuth(''); updateAuthBadge(); openLoginModal(); return; }

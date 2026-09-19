@@ -2,6 +2,7 @@
 """translate-web FastAPI 应用"""
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
@@ -18,8 +19,11 @@ from fastapi.staticfiles import StaticFiles
 import books
 import config
 import jobs
+import r2
 from auth import AuthMiddleware
 from guest_rules import guest_read_allowed
+
+log = logging.getLogger("translate-web")
 
 app = FastAPI(title="Translate Book Web", version="0.1.0")
 _STATIC = Path(__file__).parent / "static"
@@ -199,6 +203,35 @@ def api_download(name: str, path: str):
     return FileResponse(fp, media_type=mime, filename=fp.name)
 
 
+@app.get("/api/download/{name}/{path:path}")
+def api_download_link(name: str, path: str):
+    """为成品签发 R2 预签名下载 URL（E 方案：下载流量迁移 R2）。
+
+    R2 未配置或签发失败时返回 fallback 指向本地直连端点，前端据此回退到
+    原来的带凭据下载流程。
+
+    ⚠️ 路径必须落在 `/api/download/` 下：`guest_rules.guest_read_allowed` 是
+    显式白名单 + 末尾 `return False`，该前缀天然不在游客可读范围内（游客会被
+    AuthMiddleware 拦成 403）。若改成 `/api/books/{name}/link/...` 会命中
+    `startswith("/api/books")` 分支，而 `_GUEST_DENY_SUB=("/download/",)`
+    匹配不到 `link` → 游客可白拿预签名 URL。**不要改这个路径。**
+    """
+    fp = books.resolve_file(name, path)
+    if fp is None:
+        raise HTTPException(404, "文件不存在")
+
+    if fp.suffix.lower() in r2.R2_EXTS and r2.enabled():
+        url = r2.presign(name, path, fp.name)
+        if url:
+            return {"url": url, "expires_in": r2.PRESIGN_TTL, "source": "r2"}
+
+    return {
+        "url": None,
+        "fallback": "/api/books/%s/download/%s" % (name, path),
+        "source": "local",
+    }
+
+
 @app.get("/api/books/{name}/cover")
 def api_cover(name: str):
     """尝试返回 EPUB 封面图片"""
@@ -366,12 +399,29 @@ def api_trash_book_restore(name: str):
     return {"ok": True}
 
 
+def _r2_delete_book_dir(dir_name: str):
+    """清空回收站（永久删除）时同步删除 R2 对象。
+
+    只允许在「永久删除 / 清空回收站」处调用——**移入回收站（trash）不要删**，
+    回收站支持恢复，删了 R2 对象就恢复不出下载了。任何异常都不影响主流程。
+    """
+    if not dir_name.endswith("_temp"):
+        return
+    try:
+        n = r2.delete_book(dir_name[: -len("_temp")])
+        if n:
+            log.info("已清理 R2 对象 %d 个: %s", n, dir_name)
+    except Exception as e:
+        log.warning("清理 R2 对象失败 %s: %s", dir_name, e)
+
+
 @app.post("/api/trash/books/empty")
 def api_trash_books_empty():
     if TRASH_BOOKS.is_dir():
         for d in TRASH_BOOKS.iterdir():
             if d.is_dir():
                 shutil.rmtree(d, ignore_errors=True)
+                _r2_delete_book_dir(d.name)      # 永久删除 → 同步清 R2
             else:
                 d.unlink(missing_ok=True)
     return {"ok": True}
