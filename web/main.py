@@ -20,7 +20,7 @@ import books
 import config
 import jobs
 import r2
-from auth import AuthMiddleware
+from auth import AuthMiddleware, load_admin_cred
 from guest_rules import guest_read_allowed
 
 log = logging.getLogger("translate-web")
@@ -30,10 +30,16 @@ _STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 
 # 访客模式：游客只读白名单；管理员凭据校验（bcrypt，与 Caddy basicauth 同 hash）
+_ADMIN_USER, _ADMIN_HASH = load_admin_cred()
+if not _ADMIN_HASH:
+    log.warning("管理员哈希未配置（/root/.translate-web-cred 缺少 bcrypt 行）"
+                "——管理功能不可用（fail closed），游客浏览不受影响")
+
 app.add_middleware(
     AuthMiddleware,
-    admin_user="translate",
-    admin_hash="$2a$14$gRD523QHpDwAsBr6YK2yJuDyBtiOlHbpcNcVAInF8JxbGbKQ2SKLu",
+    admin_user=_ADMIN_USER or "translate",
+    # 哈希从服务器本地凭据文件读，**绝不硬编码**（仓库是公开的，hash 泄漏只能靠轮换密码撤回）
+    admin_hash=_ADMIN_HASH,
     is_read_allowed=guest_read_allowed,
     rate_limits=[("/api/search", 10, 60)],  # 游客全文搜索限频 10次/分/IP
 )

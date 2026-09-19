@@ -108,7 +108,7 @@ cat /root/translate/work/jobs/*/job.json     # 任务状态
 
 | 项 | 位置 | 说明 |
 |---|---|---|
-| 凭据 | `/root/.translate-web-cred`（chmod 600） | **应用层** Basic 认证账号密码（`web/auth.py` bcrypt 校验；Caddy 不再 basicauth）|
+| 凭据 | `/root/.translate-web-cred`（chmod 600，**仓库目录之外**）| **应用层** Basic 认证：`账号` / `密码` / `bcrypt` 三行；代码只读文件（`auth.py:load_admin_cred`），**哈希绝不进仓库**。轮换：`/root/scripts/rotate_admin_cred.py` + 重启服务；回归验证：`/root/scripts/verify_auth.py` |
 | Caddy | `/etc/caddy/Caddyfile` | 双站反代（trs→8788 / :8080→8787），**只转发不做认证** |
 | Cloudflare | 控制台 Origin Rules | Hostname→8080（**必须 Hostname 字段**） |
 | cron | Hermes `ab9ef9653179` | 每 3 分钟，prompt 含「超时安全：output 落盘后下轮 record_only 续译」 |
