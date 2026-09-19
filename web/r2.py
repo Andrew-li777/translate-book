@@ -187,6 +187,47 @@ def book_objects(book: str):
     return out
 
 
+def objects_all():
+    """列 books/ 前缀下**全部**对象 → {书名: {相对路径: 字节数}}。
+
+    未配置 / 读不到 → None（调用方须区分「空桶」与「不可用」）。
+    只打一次 R2；fast 客户端（短超时、不重试）。
+    """
+    s3, bucket = _client(fast=True)
+    if s3 is None:
+        return None
+    out = {}
+    prefix = R2_PREFIX + "/"
+    try:
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for o in page.get("Contents", []):
+                rest = o["Key"][len(prefix):]
+                book, _, rel = rest.partition("/")
+                if rel:
+                    out.setdefault(book, {})[rel] = o["Size"]
+    except Exception as e:
+        log.warning("列举 R2 对象失败: %s", e)
+        return None
+    return out
+
+
+def delete_objects(keys) -> int:
+    """批量删除指定对象（每次 ≤1000）。返回删除数量；失败返回 0。"""
+    s3, bucket = _client()
+    if s3 is None or not keys:
+        return 0
+    n = 0
+    try:
+        for i in range(0, len(keys), 1000):
+            chunk = [{"Key": k} for k in keys[i:i + 1000]]
+            s3.delete_objects(Bucket=bucket, Delete={"Objects": chunk})
+            n += len(chunk)
+    except Exception as e:
+        log.warning("批量删除对象失败: %s", e)
+    return n
+
+
 def snapshot(local_map: dict) -> dict:
     """对比「本地成品」与「R2 对象」。
 

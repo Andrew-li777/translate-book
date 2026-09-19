@@ -122,6 +122,31 @@ a{color:inherit;text-decoration:none}
 .r2-tag.off{color:var(--ink-soft);opacity:.8}
 .store-sum{font-family:var(--font-mono);font-size:.7rem;color:var(--ink-soft);margin:0 0 16px;padding:9px 12px;border:1px dashed var(--line);border-radius:5px;background:var(--paper-warm)}
 .store-sum b{color:var(--ink)}
+/* ===== S2: 存储页 ===== */
+.st-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:20px}
+.st-card{border:1px solid var(--line);border-radius:6px;padding:12px 14px;background:var(--paper-warm)}
+.st-card .st-k{font-family:var(--font-mono);font-size:.62rem;text-transform:uppercase;letter-spacing:.12em;color:var(--ink-soft)}
+.st-card .st-v{font-family:var(--font-display);font-size:1.3rem;font-weight:600;margin-top:4px}
+.st-card .st-sub{font-family:var(--font-mono);font-size:.62rem;color:var(--ink-soft);margin-top:3px}
+.st-bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:8px}
+.st-bar>i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.st-table{width:100%;border-collapse:collapse;font-size:.8rem;margin-top:6px}
+.st-table th,.st-table td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.st-table th{font-family:var(--font-mono);font-size:.6rem;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-soft);white-space:nowrap}
+.st-table td.num{font-family:var(--font-mono);font-size:.72rem;white-space:nowrap}
+.st-table tr.st-bad{background:rgba(217,119,6,.07)}
+.st-sec{margin-top:26px}
+.st-sec>h3{font-family:var(--font-display);font-size:1.05rem;font-weight:600;margin-bottom:4px}
+.st-orphan{font-family:var(--font-mono);font-size:.7rem;display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:4px;margin-bottom:4px;background:var(--paper-warm)}
+.st-orphan .o-key{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st-orphan .o-kind{font-size:.6rem;padding:1px 6px;border-radius:3px;border:1px solid var(--warn);color:var(--warn)}
+.st-tools{display:flex;align-items:center;gap:10px;margin:10px 0 12px;flex-wrap:wrap}
+/* ===== S4: 下载源提示 toast ===== */
+#toast-wrap{position:fixed;right:18px;bottom:18px;z-index:80;display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none}
+.toast{font-family:var(--font-mono);font-size:.7rem;padding:9px 14px;border-radius:6px;border:1px solid var(--line);background:var(--paper);color:var(--ink);box-shadow:0 6px 22px rgba(0,0,0,.16);max-width:78vw;animation:toast-in .18s ease}
+.toast.ok{border-color:var(--ok);color:var(--ok)}
+.toast.warn{border-color:var(--warn);color:var(--warn)}
+@keyframes toast-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .store-line{margin:-6px 0 16px}
 .dl-btn{font-family:var(--font-mono);font-size:.66rem;padding:3px 10px;border:1px solid var(--line);border-radius:4px;color:var(--ink-soft);cursor:pointer;background:transparent;transition:all .15s}
 .dl-btn:hover{color:var(--accent);border-color:var(--accent)}
@@ -226,6 +251,9 @@ a{color:inherit;text-decoration:none}
     <div class="upload-card" style="margin-top:10px">
       <button class="up-btn" onclick="openUploadModal()">＋ 上传新书</button>
     </div>
+    <div class="upload-card" id="storage-entry" style="display:none">
+      <button class="up-btn" onclick="openStorage()">▦ 存储 · STORAGE</button>
+    </div>
     <div class="upload-card" id="jobs-card">
       <div class="nav-head" style="cursor:pointer;margin-bottom:0;border-bottom:none;padding-bottom:0" onclick="toggleJobs()">
         <span class="kicker" id="jobs-collapse">▾ 任务 · JOBS</span>
@@ -283,6 +311,7 @@ a{color:inherit;text-decoration:none}
     </div>
   </main>
 </div>
+<div id="toast-wrap"></div>
 
 <!-- 登录模态框 -->
 <div id="login-modal" class="modal-mask" style="display:none" onclick="if(event.target===this)closeLoginModal()">
@@ -325,6 +354,6 @@ a{color:inherit;text-decoration:none}
     </div>
   </div>
 </div>
-<script src="/static/app.js?v=20260919c"></script>
+<script src="/static/app.js?v=20260919d"></script>
 </body>
 </html>

@@ -20,6 +20,7 @@ import books
 import config
 import jobs
 import r2
+import settings
 from auth import AuthMiddleware, load_admin_cred
 from guest_rules import guest_read_allowed
 
@@ -237,16 +238,52 @@ def api_download_link(name: str, path: str):
     if fp is None:
         raise HTTPException(404, "文件不存在")
 
-    if fp.suffix.lower() in r2.R2_EXTS and r2.enabled():
+    # S4：管理员「强制本地」开关打开时跳过 R2（排障用，下载不受影响）
+    forced = settings.force_local()
+    reason = None
+    if forced:
+        reason = "forced_local"
+    elif fp.suffix.lower() not in r2.R2_EXTS:
+        reason = "not_archive_ext"        # html/图片/md 只存本地，本就不走 R2
+    elif not r2.enabled():
+        reason = "r2_unconfigured"
+    else:
         url = r2.presign(name, path, fp.name)
         if url:
+            log.info("下载走 R2: %s/%s", name, path)
             return {"url": url, "expires_in": r2.PRESIGN_TTL, "source": "r2"}
+        reason = "presign_failed"
+        log.warning("签发 R2 预签名失败，回退本地: %s/%s", name, path)
 
+    log.info("下载走本地直连(%s): %s/%s", reason, name, path)
     return {
         "url": None,
         "fallback": "/api/books/%s/download/%s" % (name, path),
         "source": "local",
+        "reason": reason,
     }
+
+
+# ===================== S4: 下载源设置（管理员） =====================
+
+@app.get("/api/settings")
+def api_settings_get():
+    """当前运行期设置（管理员；游客 403 —— 不在 guest_rules 白名单）"""
+    s = settings.load()
+    s["r2_configured"] = r2.enabled()
+    return s
+
+
+@app.post("/api/settings")
+async def api_settings_post(payload: dict):
+    """改设置：{"force_local_download": true/false}（改完立即生效，不需重启）"""
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "body 必须是对象")
+    before = settings.load()
+    after = settings.save(payload)
+    if before.get("force_local_download") != after.get("force_local_download"):
+        log.warning("下载源切换：force_local_download=%s", after.get("force_local_download"))
+    return after
 
 
 @app.get("/api/books/{name}/cover")
@@ -256,6 +293,32 @@ def api_cover(name: str):
     if fp is None:
         raise HTTPException(404, "无封面")
     return FileResponse(fp, media_type="image/png")
+
+
+# ===================== S2: 存储页（本地 vs R2 逐书对照 + 孤儿清理） =====================
+# ⚠️ 两个端点都不在 guest_rules 白名单内 → 游客一律 403（存储页是管理员视图）
+
+@app.get("/api/storage")
+def api_storage(refresh: int = Query(0)):
+    """存储页数据：逐书三列对照 + 孤儿对象 + 容量汇总。refresh=1 绕过快照缓存。"""
+    return books.storage_page(refresh=bool(refresh))
+
+
+@app.post("/api/storage/gc")
+async def api_storage_gc(payload: dict):
+    """清理 R2 孤儿对象（管理员）。body: {"keys": ["books/书名/book.pdf", ...]}
+
+    后端会**重新拉一次远端复核**：本地存在同名成品的一律拒绝删除，
+    因此前端误传也不会造成副本丢失。
+    """
+    keys = payload.get("keys") if isinstance(payload, dict) else None
+    if not isinstance(keys, list):
+        raise HTTPException(400, "keys 必须是数组")
+    res = books.storage_gc([str(k) for k in keys])
+    if res.get("error"):
+        raise HTTPException(409, res["error"])
+    log.info("存储页清理孤儿对象：删除 %d 个，拒绝 %d 个", res.get("deleted", 0), len(res.get("refused", [])))
+    return res
 
 
 # ===================== P3a: 上传 + 任务队列 =====================

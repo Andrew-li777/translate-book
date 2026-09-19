@@ -5,6 +5,17 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt = n => n >= 1048576 ? (n/1048576).toFixed(1)+"MB" : n >= 1024 ? Math.round(n/1024)+"KB" : n+"B";
 
+/* ===== 轻提示 toast（右下角，自动消失） ===== */
+function toast(msg, kind){
+  const wrap = document.getElementById('toast-wrap');
+  if(!wrap) return;
+  const el = document.createElement('div');
+  el.className = 'toast' + (kind ? ' ' + kind : '');
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(()=>{ el.style.transition='opacity .3s'; el.style.opacity='0'; setTimeout(()=>el.remove(), 320); }, 5200);
+}
+
 /* ===== 认证（游客/管理员） ===== */
 const AUTH_KEY = 'tw-basic-auth';
 function getAuth(){ try{ return localStorage.getItem(AUTH_KEY) || ''; }catch(e){ return ''; } }
@@ -22,6 +33,7 @@ function updateAuthBadge(){
     if(btn) btn.style.display = 'inline-block';
     if(lo) lo.style.display = 'none';
   }
+  storageEntryVisible();
 }
 function openLoginModal(){ $('login-msg').textContent = ''; $('login-modal').style.display = 'flex'; $('login-user').focus(); }
 function closeLoginModal(){ $('login-modal').style.display = 'none'; }
@@ -230,9 +242,15 @@ async function dlFmt(name, ext){
   }catch(e){ /* 忽略，走本地回退 */ }
 
   // 2) 有 R2 链接 → 顶级导航直下（浏览器直接写盘，几十 MB 的 PDF 不进 JS 内存）
-  if(d && d.url){ window.location.href = d.url; return; }
+  if(d && d.url){
+    toast(`下载源：R2 预签名直链 · ${file}（不吃服务器出网）`, 'ok');
+    window.location.href = d.url; return;
+  }
 
   // 3) 回退：带凭据的 fetch + Blob（本地直连端点，原可靠路径）
+  const WHY = {forced_local:'管理员已强制本地', r2_unconfigured:'R2 未配置',
+               presign_failed:'R2 签发失败', not_archive_ext:'该格式只存本地'};
+  toast(`下载源：服务器本地直连 · ${file}（${WHY[d && d.reason] || 'R2 不可用'}）`, 'warn');
   const url = `/api/books/${encodeURIComponent(name)}/download/${file}`;
   try{
     const r = await fetch(url, { headers: _authHeaders() });
@@ -737,6 +755,160 @@ function toggleSidebar(){
   const on = app.classList.toggle('collapsed');
   $('side-toggle-btn').textContent = on ? '▸' : '☰';
   try{ localStorage.setItem('tw-side-collapsed', on ? '1' : '0'); }catch(e){}
+}
+
+/* ===== S2: 存储页（本地 vs R2 逐书对照 + 孤儿清理 + 容量汇总） ===== */
+let ST_PAGE = null, SEL_ORPHANS = new Set(), ST_SET = null;
+
+function storageEntryVisible(){
+  const el = $('storage-entry');
+  if(el) el.style.display = isAdmin() ? 'block' : 'none';
+}
+async function openStorage(){
+  if(!requireLogin()) return;
+  CURRENT = null; CUR_ACTIVE = false; stopProgPoll();
+  $('crumb-book').style.display='none'; $('crumb-sep').style.display='none';
+  $('page-title').textContent = '存储 · STORAGE';
+  renderNav();
+  $('content').innerHTML = '<div class="empty-hint">读取存储状态…</div>';
+  await reloadStorage(true);
+}
+async function reloadStorage(fresh){
+  try{ ST_PAGE = await api('/api/storage' + (fresh ? '?refresh=1' : '')); }
+  catch(e){ $('content').innerHTML = `<div class="empty-hint">读取失败：${esc(e.message)}</div>`; return; }
+  ST_SET = await api('/api/settings').catch(()=>null);
+  SEL_ORPHANS = new Set();
+  renderStoragePage();
+}
+async function setForceLocal(on){
+  if(!requireLogin()) return;
+  try{
+    const r = await authFetch('/api/settings', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({force_local_download: !!on})});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok){ alert(d.detail || ('HTTP '+r.status)); return; }
+    ST_SET = d;
+    toast(on ? '已开启「强制本地下载」：所有成品下载跳过 R2，走服务器直连' : '已关闭「强制本地下载」：恢复 R2 预签名直链', on ? 'warn' : 'ok');
+    renderStoragePage();
+  }catch(e){ alert('设置失败：'+(e.message||e)); }
+}
+function renderStoragePage(){
+  const d = ST_PAGE, t = d.totals, c = $('content');
+  const disk = d.disk || {};
+  const bar = (pct, cls) => `<div class="st-bar"><i class="${cls||''}" style="width:${Math.min(100,pct||0)}%"></i></div>`;
+
+  /* --- 顶部卡片 --- */
+  const cards = `
+    <div class="st-cards">
+      <div class="st-card"><div class="st-k">本地工作区</div>
+        <div class="st-v">${fmt(d.work_bytes||0)}</div>
+        <div class="st-sub">${t.local_files} 成品 · 磁盘 ${fmt(disk.used||0)}/${fmt(disk.total||0)}（${disk.pct||0}%）</div>
+        ${bar(disk.pct)}</div>
+      <div class="st-card"><div class="st-k">R2 归档</div>
+        <div class="st-v">${d.available===false ? '读不到' : fmt(t.r2_bytes||0)}</div>
+        <div class="st-sub">${t.r2_objects} 对象 · 免费额度 ${fmt(d.quota_bytes||0)}</div>
+        ${bar(t.r2_bytes && d.quota_bytes ? t.r2_bytes*100/d.quota_bytes : 0)}</div>
+      <div class="st-card"><div class="st-k">一致性</div>
+        <div class="st-v" style="color:${t.diff_items? 'var(--warn)':'var(--ok)'}">${t.diff_items? '差异 '+t.diff_items : '一致'}</div>
+        <div class="st-sub">本地 ${t.local_files} vs R2 ${t.r2_objects} 个对象</div></div>
+      <div class="st-card"><div class="st-k">孤儿对象</div>
+        <div class="st-v" style="color:${(d.orphans||[]).length? 'var(--warn)':'var(--ok)'}">${(d.orphans||[]).length||'0'}</div>
+        <div class="st-sub">${fmt(d.orphan_bytes||0)} · 远端有、本地不该有</div></div>
+    </div>`;
+
+  const banner = !d.configured
+    ? `<div class="store-sum"><span class="r2-tag off">R2 —</span> 未配置（缺 <span class="mono">/root/.translate-r2-cred</span> 或凭证不全）→ 成品只存本地，下载走直连</div>`
+    : (d.available === false
+      ? `<div class="store-sum"><span class="r2-tag off">R2 ?</span> 暂时读不到（网络/凭证异常）→ 下载自动回退本地直连，<b>如下数字不可信</b></div>`
+      : `<div class="store-sum">缓存 ${d.age_s||0}s · <span style="opacity:.7">R2 只存 pdf/docx/epub 成品；html/图片/md 只存本地</span></div>`);
+
+  /* --- 逐书三列对照 --- */
+  const rows = (d.rows||[]).map(r=>{
+    const diff = [];
+    if(r.missing.length)  diff.push(`缺 ${r.missing.map(esc).join('、')}`);
+    if(r.mismatch.length) diff.push(`尺寸不符 ${r.mismatch.map(esc).join('、')}`);
+    if(r.extra.length)    diff.push(`多余 ${r.extra.map(esc).join('、')}`);
+    const ok = r.synced;
+    const r2txt = (d.available===false) ? '—' : `${r.r2_objects} 个 / ${fmt(r.r2_bytes)}`;
+    return `<tr class="${ok?'':'st-bad'}">
+      <td><span class="mono" style="font-size:.72rem;cursor:pointer" onclick="openBook('${esc(r.name)}')">${esc(r.title)}</span></td>
+      <td class="num">${r.local_files} 个<br>${fmt(r.local_bytes)}</td>
+      <td class="num">${r2txt}${ok?'':'<br><span class="r2-tag warn">不一致</span>'}</td>
+      <td class="num">${ok? '<span class="r2-tag ok">✓ 同步</span>' : esc(diff.join('；'))}</td>
+    </tr>`;
+  }).join('');
+
+  const orphanList = (d.orphans||[]).map(o=>`
+    <div class="st-orphan">
+      <input type="checkbox" data-key="${esc(o.key)}" onchange="toggleSelOrphan(this.dataset.key, this.checked)">
+      <span class="mono o-key" title="${esc(o.key)}">${esc(o.key)}</span>
+      <span class="o-kind">${o.kind==='ghost_book'? '整本已不存在':'本地已无此文件'}</span>
+      <span>${fmt(o.size)}</span>
+    </div>`).join('');
+
+  c.innerHTML = banner + cards + `
+    <div class="st-tools">
+      <span class="kicker">逐书对照 · LOCAL vs R2</span>
+      <button class="mini-btn" onclick="reloadStorage(true)">↻ 刷新</button>
+      <span style="margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span class="r2-tag ${(ST_SET && ST_SET.force_local_download) ? 'off' : 'ok'}" title="当前成品下载实际走的路径">下载源：${(ST_SET && ST_SET.force_local_download) ? '本地直连' : (d.available ? 'R2 预签名' : '本地直连（回退）')}</span>
+        <label class="kicker" style="cursor:pointer" title="打开后所有成品下载都跳过 R2、走服务器本地直连 —— 用于排障：怀疑 R2 链路有问题时可一键切换验证">
+          <input type="checkbox" ${(ST_SET && ST_SET.force_local_download) ? 'checked' : ''} onchange="setForceLocal(this.checked)"> 强制本地下载
+        </label>
+        <span class="kicker">${(d.rows||[]).length} 本有成品</span>
+      </span>
+    </div>
+    <table class="st-table">
+      <thead><tr><th>书名</th><th>本地成品</th><th>R2 归档</th><th>差异</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="4" style="text-align:center;color:var(--ink-soft)">暂无成品</td></tr>'}</tbody>
+    </table>
+    <div class="st-sec">
+      <h3>孤儿对象 · ORPHANS</h3>
+      <div class="kicker" style="color:var(--ink-soft);margin-bottom:6px">
+        R2 上有、本地已不该有的对象 —— 删书/清空回收站后遗留，或成品被重建过。
+        <b>清理只删远端副本，绝不动本地文件</b>；本地存在同名成品的一律拒绝删除。
+      </div>
+      ${ (d.orphans||[]).length ? `
+        <div class="st-tools">
+          <label class="kicker"><input type="checkbox" id="sel-all-orphans" onchange="toggleSelAllOrphans()"> 全选</label>
+          <button class="mini-btn danger" id="btn-gc-orphans" onclick="gcOrphans()" disabled>清理所选（<span id="gc-count">0</span> 个 / <span id="gc-bytes">0B</span>）</button>
+        </div>` + orphanList
+        : '<div class="kicker" style="color:var(--ok)">✓ 无孤儿对象</div>' }
+    </div>`;
+  updateSelOrphanUI();
+}
+function toggleSelOrphan(key, on){ if(on) SEL_ORPHANS.add(key); else SEL_ORPHANS.delete(key); updateSelOrphanUI(); }
+function toggleSelAllOrphans(){
+  const on = $('sel-all-orphans').checked;
+  SEL_ORPHANS = on ? new Set((ST_PAGE.orphans||[]).map(o=>o.key)) : new Set();
+  document.querySelectorAll('.st-orphan input[type=checkbox]').forEach(c=>c.checked = on);
+  updateSelOrphanUI();
+}
+function updateSelOrphanUI(){
+  const keys = [...SEL_ORPHANS];
+  const b = [...(ST_PAGE&&ST_PAGE.orphans||[])].filter(o=>SEL_ORPHANS.has(o.key));
+  const bytes = b.reduce((a,o)=>a+o.size,0);
+  const n = $('gc-count'); if(n) n.textContent = keys.length;
+  const y = $('gc-bytes'); if(y) y.textContent = fmt(bytes);
+  const btn = $('btn-gc-orphans'); if(btn) btn.disabled = keys.length===0;
+  const all = $('sel-all-orphans');
+  if(all && ST_PAGE){ const total=(ST_PAGE.orphans||[]).length;
+    all.checked = total>0 && keys.length===total; all.indeterminate = keys.length>0 && keys.length<total; }
+}
+async function gcOrphans(){
+  if(!requireLogin()) return;
+  const keys = [...SEL_ORPHANS];
+  if(!keys.length) return;
+  if(!confirm(`清理 ${keys.length} 个 R2 孤儿对象？\n\n只删远端副本，不影响本地文件和下载（本地副本仍在）。此操作不可撤销。`)) return;
+  try{
+    const r = await authFetch('/api/storage/gc', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({keys})});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok){ alert(d.detail || ('HTTP '+r.status)); return; }
+    const ref = (d.refused||[]).length;
+    alert(`已删除 ${d.deleted} 个孤儿对象` + (ref ? `；${ref} 个被拒绝（${(d.refused||[]).map(x=>x.why).join('；')}）` : ''));
+    await reloadStorage(true);
+  }catch(e){ alert('清理失败：'+(e.message||e)); }
 }
 
 /* ===== 启动 ===== */

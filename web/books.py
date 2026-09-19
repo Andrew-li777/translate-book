@@ -165,6 +165,158 @@ def storage_view(book_list: list) -> dict:
         return dict(_EMPTY_STORAGE)
 
 
+R2_FREE_QUOTA = 10 * 1024 ** 3      # Cloudflare R2 免费额度 10GB（展示用）
+_WORK_ROOT_BYTES = {"ts": 0.0, "n": 0}
+_WORK_ROOT_TTL = 60
+
+
+def _dir_bytes(root: Path) -> int:
+    """工作区实际占用（60s 缓存 —— 遍历 400MB 目录不宜每次请求都做）"""
+    import time as _t
+    now = _t.time()
+    if now - _WORK_ROOT_BYTES["ts"] < _WORK_ROOT_TTL and _WORK_ROOT_BYTES["n"]:
+        return _WORK_ROOT_BYTES["n"]
+    total = 0
+    try:
+        for p in root.rglob("*"):
+            if p.is_file():
+                try:
+                    total += p.stat().st_size
+                except OSError:
+                    pass
+    except Exception:
+        pass
+    _WORK_ROOT_BYTES.update({"ts": now, "n": total})
+    return total
+
+
+def _disk_info() -> dict:
+    import shutil as _sh
+    try:
+        u = _sh.disk_usage(str(WORK_ROOT))
+        return {"total": u.total, "used": u.used, "free": u.free,
+                "pct": round(u.used * 100 / u.total, 1) if u.total else 0}
+    except Exception:
+        return {"total": 0, "used": 0, "free": 0, "pct": 0}
+
+
+def storage_page(refresh: bool = False) -> dict:
+    """存储页数据：逐书三列对照 + 孤儿对象 + 容量汇总（管理员端点用）。
+
+    孤儿对象定义（R2 上有、本地不该有）：
+      kind="ghost_book"  本地书已不存在（删书/清空回收站后遗留）
+      kind="extra"       书还在，但该文件本地已无（如重建过成品、改过名）
+    ⚠️ 只读：本函数不做任何删除。
+    """
+    import r2
+    bs = scan_books()
+    local_map = {b["name"]: _final_files(b.get("files") or {}) for b in bs}
+    local_map = {k: v for k, v in local_map.items() if v}
+    if refresh:
+        r2._snap.update({"ts": 0.0, "key": None, "data": None})   # 绕过 30s 缓存
+    view = r2.snapshot(local_map)
+
+    # ---- 逐书三列 ----
+    rows, tot = [], {"local_files": 0, "local_bytes": 0, "r2_objects": 0, "r2_bytes": 0, "diff_items": 0}
+    for b in bs:
+        name = b["name"]
+        files = _final_files(b.get("files") or {})
+        if not files:
+            continue                        # 无成品（未完成的书不进存储页）
+        d = view["books"].get(name) or {}
+        rows.append({
+            "name": name, "title": b.get("title") or name, "status": b.get("status"),
+            "local_files": len(files), "local_bytes": sum(files.values()),
+            "r2_objects": d.get("object_count", 0), "r2_bytes": d.get("r2_bytes", 0),
+            "expected": len(files),
+            "missing": d.get("missing", []), "mismatch": d.get("mismatch", []),
+            "extra": d.get("extra", []),
+            "synced": d.get("synced", False),
+        })
+        tot["local_files"] += len(files)
+        tot["local_bytes"] += sum(files.values())
+        tot["r2_objects"] += d.get("object_count", 0)
+        tot["r2_bytes"] += d.get("r2_bytes", 0)
+        tot["diff_items"] += len(d.get("missing", [])) + len(d.get("mismatch", [])) + len(d.get("extra", []))
+
+    # ---- 孤儿对象 ----
+    orphans, orphan_bytes = [], 0
+    if view["available"]:
+        remote = r2.objects_all() or {}
+        for book, objs in remote.items():
+            if book not in local_map:
+                for rel, size in sorted(objs.items()):
+                    orphans.append({"key": "%s/%s/%s" % (r2.R2_PREFIX, book, rel),
+                                    "book": book, "rel": rel, "size": size,
+                                    "kind": "ghost_book"})
+                    orphan_bytes += size
+            else:
+                for rel, size in sorted(objs.items()):
+                    if rel not in local_map[book]:
+                        orphans.append({"key": "%s/%s/%s" % (r2.R2_PREFIX, book, rel),
+                                        "book": book, "rel": rel, "size": size,
+                                        "kind": "extra"})
+                        orphan_bytes += size
+
+    return {
+        "configured": view["configured"], "available": view["available"],
+        "cached": view["cached"], "age_s": view["age_s"],
+        "rows": rows, "totals": tot,
+        "orphans": orphans, "orphan_bytes": orphan_bytes,
+        "disk": _disk_info(), "work_bytes": _dir_bytes(WORK_ROOT),
+        "quota_bytes": R2_FREE_QUOTA,
+    }
+
+
+def storage_gc(keys: list) -> dict:
+    """删除**孤儿对象**（管理员操作，双重复核后才删）。
+
+    安全约束：
+      1. 每个 key 必须形如 books/{书名}/{相对路径}；
+      2. 删前**重新拉一次远端**确认它确实是孤儿 —— 本地存在同名成品的一律拒绝
+         （用户可能在 GC 期间刚好补传，绝不能删掉唯一副本）；
+      3. 单次上限 500 个。
+    """
+    import r2
+    if not keys:
+        return {"deleted": 0, "refused": [], "error": "未指定对象"}
+    if len(keys) > 500:
+        return {"deleted": 0, "refused": [], "error": "单次最多清理 500 个对象"}
+
+    local_map = {b["name"]: _final_files(b.get("files") or {}) for b in scan_books()}
+    local_map = {k: v for k, v in local_map.items() if v}
+    remote = r2.objects_all()
+    if remote is None:
+        return {"deleted": 0, "refused": [], "error": "R2 读不到，已放弃清理（不冒删错的风险）"}
+
+    refuse, ok = [], []
+    for k in keys:
+        parts = str(k).split("/")
+        if len(parts) < 3 or parts[0] != r2.R2_PREFIX:
+            refuse.append({"key": k, "why": "路径不合法"})
+            continue
+        book, rel = parts[1], "/".join(parts[2:])
+        if book in local_map and rel in local_map[book]:
+            refuse.append({"key": k, "why": "本地存在同名成品，拒绝删除"})
+            continue
+        if book not in remote or rel not in remote[book]:
+            refuse.append({"key": k, "why": "远端已无此对象"})
+            continue
+        ok.append(k)
+
+    n = r2.delete_objects(ok) if ok else 0
+    _snap_clear()
+    return {"deleted": n, "refused": refuse, "files": ok}
+
+
+def _snap_clear():
+    try:
+        import r2
+        r2._snap.update({"ts": 0.0, "key": None, "data": None})
+    except Exception:
+        pass
+
+
 def get_book(name: str) -> dict | None:
     """单书详情（含文件清单 + 逐块信息）"""
     if not re.fullmatch(r"[A-Za-z0-9_\-\u4e00-\u9fff]+", name):
