@@ -73,7 +73,15 @@ def index():
 @app.get("/api/books")
 def api_books():
     books.ensure_work_root()
-    return {"books": books.scan_books()}
+    bs = books.scan_books()
+    st = books.storage_view(bs)          # 本地 vs R2（含 30s 缓存；R2 不可用则降级）
+    for b in bs:
+        b["r2"] = st["books"].get(b["name"], {})
+    return {
+        "books": bs,
+        "storage": dict(st["totals"], configured=st["configured"],
+                        available=st["available"], cached=st["cached"], age_s=st["age_s"]),
+    }
 
 
 @app.get("/api/books/{name}")
@@ -81,6 +89,9 @@ def api_book(name: str):
     b = books.get_book(name)
     if b is None:
         raise HTTPException(404, "书不存在")
+    st = books.storage_view([b])
+    b["r2"] = st["books"].get(name, {})
+    b["storage"] = {"configured": st["configured"], "available": st["available"]}
     return b
 
 

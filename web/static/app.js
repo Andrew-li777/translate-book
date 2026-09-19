@@ -1,5 +1,5 @@
 /* translate-web 前端逻辑 */
-let BOOKS = [], CURRENT = null, CUR_CHUNK = null;
+let BOOKS = [], CURRENT = null, CUR_CHUNK = null, STORAGE = null;
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -97,7 +97,7 @@ let SEL_BOOKS = new Set(), SEL_JOBS = new Set();  // 单项选择状态
 
 async function loadLibrary(){
   try{
-    const d = await api('/api/books'); BOOKS = d.books;
+    const d = await api('/api/books'); BOOKS = d.books; STORAGE = d.storage || null;
   }catch(e){ $('content').innerHTML = `<div class="empty-hint">加载失败：${esc(e.message)}</div>`; return; }
   renderNav(); renderLibrary();
   $('foot-meta').textContent = `${new Date().toISOString().slice(0,10)} · ${BOOKS.length} 本`;
@@ -116,10 +116,46 @@ function renderNav(){
   $('nav-count').textContent = BOOKS.length;
   updateSelUI();
 }
+// ===== 存储分工（本地 vs R2）=====
+// 书卡/详情页共用：R2 状态徽章。configured=false → 未配置；available=false → 读不到（已回退本地）
+function r2Tag(b){
+  const r = (b && b.r2) || {};
+  const st = (b && b.storage) || null;
+  const has = Object.keys(r).length > 0;
+  const configured = has ? true : (st ? !!st.configured : false);
+  const available  = has ? true : (st ? !!st.available : false);
+  if(!configured) return `<span class="r2-tag off" title="R2 未配置（缺 /root/.translate-r2-cred 或凭证不全）→ 成品下载走服务器本地直连">R2 —</span>`;
+  if(!available)  return `<span class="r2-tag off" title="R2 暂时读不到（网络/凭证异常）→ 已自动回退本地直连，下载不受影响">R2 ?</span>`;
+  const n = r.object_count ?? 0, e = r.expected ?? 0;
+  if(r.synced) return `<span class="r2-tag ok" title="R2 已同步 ${n} 个对象 / ${fmt(r.r2_bytes||0)}；下载走预签名直下（不吃服务器出网）">R2 ✓ ${n}/${e}</span>`;
+  const bits = [];
+  if((r.missing||[]).length)  bits.push('缺 ' + r.missing.join(','));
+  if((r.mismatch||[]).length) bits.push('尺寸不符 ' + r.mismatch.join(','));
+  if((r.extra||[]).length)    bits.push('多余 ' + r.extra.join(','));
+  return `<span class="r2-tag warn" title="R2 与本地不一致：${bits.join('；')} → 下次同步（≤15 分钟）自动补齐">R2 ⚠ ${n}/${e}</span>`;
+}
+function storeSummary(){
+  const s = STORAGE; if(!s) return '';
+  const loc = `本地 <b>${s.local_files||0}</b> 成品 <b>${fmt(s.local_bytes||0)}</b>`;
+  if(!s.configured) return `<div class="store-sum">${loc} ｜ <span class="r2-tag off">R2 —</span> 未配置（成品下载走本地直连）</div>`;
+  if(!s.available)  return `<div class="store-sum">${loc} ｜ <span class="r2-tag off">R2 ?</span> 暂时读不到（下载自动回退本地）</div>`;
+  const d = s.diff_items|0;
+  return `<div class="store-sum">${loc} ｜ R2 <b>${s.r2_objects||0}</b> 对象 <b>${fmt(s.r2_bytes||0)}</b> `
+    + `<span class="r2-tag ${d?'warn':'ok'}">${d? '差异 '+d : '差异 0'}</span>`
+    + `<span style="margin-left:8px;opacity:.7">R2 只存 pdf/docx/epub 成品 · 缓存 ${s.age_s||0}s</span></div>`;
+}
+function detailStoreLine(b){
+  const fin = Object.entries(b.files||{}).filter(([k])=>k.startsWith('book.') && /\.(pdf|docx|epub)$/.test(k));
+  const lb = fin.reduce((a,p)=>a+p[1],0);
+  const r = b.r2 || {}, st = b.storage || {};
+  const rtxt = (st.configured === false) ? 'R2 未配置'
+             : (Object.keys(r).length ? `R2 ${r.object_count} 个对象 / ${fmt(r.r2_bytes||0)}` : 'R2 读取中/不可用');
+  return `<div class="kicker store-line">存储分工 · 本地成品 <b>${fin.length}</b> 个 / <b>${fmt(lb)}</b> ｜ ${rtxt} ${r2Tag(b)}</div>`;
+}
 function renderLibrary(){
   const c = $('content');
-  if(!BOOKS.length){ c.innerHTML = '<div class="empty-hint">暂无藏书 · 等待第一本书入库</div>'; return; }
-  c.innerHTML = '<div class="grid">' + BOOKS.map(b=>{
+  if(!BOOKS.length){ c.innerHTML = storeSummary() + '<div class="empty-hint">暂无藏书 · 等待第一本书入库</div>'; return; }
+  c.innerHTML = storeSummary() + '<div class="grid">' + BOOKS.map(b=>{
     const st = statusInfo(b.status);
     const p = progOf(b);
     const files = Object.entries(b.files||{}).map(([k,v])=>`<span>${k} ${fmt(v)}</span>`).join('');
@@ -131,6 +167,7 @@ function renderLibrary(){
         <div class="card-author">${esc(b.author||'—')}</div>
         <div class="card-meta">
           <span class="badge ${st.c}">${st.t}</span>
+          ${r2Tag(b)}
           <span>${b.chunk_count||0} chunks</span><span>→ ${esc(b.output_lang||'zh')}</span>${pct}
         </div>
         ${bar}
@@ -173,6 +210,7 @@ async function pollTick(){
       paintDetailProg(b);
       const st = statusInfo(b.status), badge = document.querySelector('#detail-head .badge');
       if(badge){ badge.className = 'badge ' + st.c; badge.textContent = st.t; }
+      const ds = $('detail-store'); if(ds) ds.innerHTML = detailStoreLine(b);   // 存储分工行同步刷新
       if(!CUR_ACTIVE) stopProgPoll();
     } else {                                      // 书库页：整体重绘（含书卡/侧栏进度条）
       await loadLibrary();
@@ -265,6 +303,7 @@ async function openBook(name){
       <span class="badge ${st0.c}">${st0.t}</span>
       <span class="kicker">${esc(b.meta.author||'')} · ${b.chunk_count||0} chunks · → ${esc(b.meta.output_lang||'zh')}</span>
     </div>
+    <div id="detail-store">${detailStoreLine(b)}</div>
     <div id="detail-prog" style="margin-bottom:18px"></div>
     <div class="tabs">
       <div class="tab active" data-tab="out" onclick="switchTab('out')">成品</div>

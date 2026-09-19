@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """书库扫描与状态判定：读取 /root/translate/work/ 下所有 <书名>_temp/ 目录"""
 import json
+import logging
 import re
 import time
 from pathlib import Path
 
 from config import WORK_ROOT
 
+log = logging.getLogger("books")
 _TEMP_SUFFIX = "_temp"
+_FINAL_EXTS = ("pdf", "docx", "epub")   # 只有这三类会上 R2
 
 
 def _read_config(dir_path: Path) -> dict:
@@ -128,6 +131,38 @@ def _file_summary(dir_path: Path) -> dict:
         if fp.exists():
             out[name] = fp.stat().st_size
     return out
+
+
+# ===================== 存储分工（本地 vs R2）=====================
+_EMPTY_STORAGE = {
+    "configured": False, "available": False, "books": {},
+    "totals": {"local_files": 0, "local_bytes": 0, "r2_objects": 0, "r2_bytes": 0, "diff_items": 0},
+    "cached": False, "age_s": 0,
+}
+
+
+def _final_files(files: dict) -> dict:
+    """只取「会上 R2 的成品」（book.pdf/docx/epub）"""
+    return {k: v for k, v in (files or {}).items()
+            if k.startswith("book.") and k.rsplit(".", 1)[-1] in _FINAL_EXTS}
+
+
+def storage_view(book_list: list) -> dict:
+    """本地成品 vs R2 对象对比（r2.snapshot 内含 30s 缓存）。
+
+    R2 未配置 / 不可用 / 任何异常 → 返回空视图（configured/available=False），
+    前端据此显示「R2 —」或「R2 ?」，绝不影响书库本身的可用性。
+    """
+    try:
+        import r2
+        local_map = {b["name"]: _final_files(b.get("files")) for b in book_list}
+        local_map = {k: v for k, v in local_map.items() if v}
+        if not local_map:
+            return dict(_EMPTY_STORAGE)
+        return r2.snapshot(local_map)
+    except Exception as e:
+        log.warning("存储快照失败: %s", e)
+        return dict(_EMPTY_STORAGE)
 
 
 def get_book(name: str) -> dict | None:
