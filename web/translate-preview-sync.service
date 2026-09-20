@@ -1,0 +1,11 @@
+[Unit]
+Description=Run translate-book R2 preview sync (P2-2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/translate
+ExecStart=/root/translate/book/.venv/bin/python /root/translate/web/preview_sync.py
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run translate-book R2 preview sync every 30 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
