@@ -7,6 +7,7 @@
 """
 import json
 import logging
+import mimetypes
 from pathlib import Path
 
 import boto3
@@ -95,6 +96,28 @@ def object_key(book: str, rel_path: str) -> str:
     return "%s/%s/%s" % (R2_PREFIX, book, rel_path)
 
 
+_EXT_CT = {
+    ".html": "text/html; charset=utf-8",
+    ".md": "text/markdown; charset=utf-8",
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".epub": "application/epub+zip",
+}
+
+
+def content_type_for(name: str) -> str:
+    """上传对象的 Content-Type（必须显式设置）。
+
+    2026-09-20 复盘：boto3 upload_file 对 .html 实测 ContentType=None（不猜文本类型），
+    经 CF 直连时浏览器把 book.html 当纯文本渲染 →「网页版预览」显示源码。
+    """
+    ext = Path(name).suffix.lower()
+    if ext in _EXT_CT:
+        return _EXT_CT[ext]
+    ct, _ = mimetypes.guess_type(name)
+    return ct or "application/octet-stream"
+
+
 def upload(book: str, rel_path: str, local: Path) -> bool:
     """幂等上传：远端已有同尺寸对象则跳过。"""
     s3, bucket = _client()
@@ -116,7 +139,9 @@ def upload(book: str, rel_path: str, local: Path) -> bool:
     except Exception as e:
         log.warning("head_object 异常 %s: %s", key, e)
     try:
-        s3.upload_file(str(local), bucket, key, Config=_UPLOAD_CFG)
+        s3.upload_file(str(local), bucket, key,
+                       ExtraArgs={"ContentType": content_type_for(local.name)},
+                       Config=_UPLOAD_CFG)
         return True
     except Exception as e:
         log.warning("上传失败 %s: %s", key, e)

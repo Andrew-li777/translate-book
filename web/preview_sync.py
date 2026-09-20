@@ -155,7 +155,9 @@ def sync_book(s3, bucket: str, name: str, tmpdir: Path) -> bool:
         total = len(pending)
         for i, (rel, fp, key) in enumerate(pending, 1):
             t0 = time.time()
-            s3.upload_file(str(fp), bucket, key, Config=r2._UPLOAD_CFG)
+            s3.upload_file(str(fp), bucket, key,
+                           ExtraArgs={"ContentType": r2.content_type_for(rel)},
+                           Config=r2._UPLOAD_CFG)
             print("  [%d/%d] %s  %.0fKB  %.1fs" % (i, total, rel, fp.stat().st_size / 1024, time.time() - t0))
         bad = [k for _, fp, k in pending if not _head_match(s3, bucket, k, fp)]
         if bad:
