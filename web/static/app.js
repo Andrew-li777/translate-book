@@ -313,7 +313,7 @@ async function gotoChunk(book, chunk){
 async function openBook(name){
   CURRENT = name; renderNav();
   $('crumb-book').style.display='inline'; $('crumb-sep').style.display='inline';
-  $('crumb-book').textContent = name;
+  $('crumb-book').textContent = name; $('crumb-book').title = name;
   let b;
   try{ b = await api(`/api/books/${name}`); }catch(e){ $('content').innerHTML=`<div class="empty-hint">${esc(e.message)}</div>`; return; }
   $('page-title').textContent = b.meta.title || name;
