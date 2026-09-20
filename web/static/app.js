@@ -194,7 +194,7 @@ function renderLibrary(){
   window.scrollTo(0,0);
 }
 function showLibrary(){
-  CURRENT=null; CUR_ACTIVE=false;
+  CURRENT=null; CUR_ACTIVE=false; ROUTE_VIEW='lib'; setHash('');
   $('crumb-book').style.display='none'; $('crumb-sep').style.display='none'; $('page-title').textContent='';
   renderNav(); renderLibrary();
   if(anyActive()) startProgPoll();
@@ -280,7 +280,7 @@ async function doSearch(){
   let d;
   try{ d = await api(`/api/search?q=${encodeURIComponent(q)}&scope=${scope}`); }
   catch(e){ $('content').innerHTML = `<div class="empty-hint">${esc(e.message)}</div>`; return; }
-  CURRENT = null;
+  CURRENT = null; ROUTE_VIEW='search';
   $('crumb-book').style.display='none'; $('crumb-sep').style.display='none';
   $('page-title').textContent = `搜索「${q}」`;
   renderNav();
@@ -310,8 +310,11 @@ async function gotoChunk(book, chunk){
 }
 
 /* ===== 详情 ===== */
-async function openBook(name){
-  CURRENT = name; renderNav();
+async function openBook(name, tab){
+  CURRENT = name; ROUTE_VIEW = 'book';
+  CUR_TAB = (tab && tab !== 'out') ? tab : 'out';
+  setHash('book/' + encodeURIComponent(name) + (CUR_TAB !== 'out' ? '/' + CUR_TAB : ''));
+  renderNav();
   $('crumb-book').style.display='inline'; $('crumb-sep').style.display='inline';
   $('crumb-book').textContent = name; $('crumb-book').title = name;
   let b;
@@ -356,6 +359,7 @@ async function openBook(name){
       <div id="doc-preview-slot"><button class="dl-btn" onclick="loadDocPreview('${esc(name)}')">加载网页预览</button></div></div>` : '');
   CUR_B = b;
   TABS_LOADED = {out: true};          // P3: 其余面板首次切换时才加载（打开即用，不再等 9 个请求）
+  if(CUR_TAB !== 'out') switchTab(CUR_TAB);   // URL 路由恢复：直接落到指定标签
 }
 function loadDocPreview(name){
   const slot = $('doc-preview-slot');
@@ -378,6 +382,8 @@ let TABS_LOADED = {};             // P3: 已加载过的面板
 async function switchTab(t){
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active', x.dataset.tab===t));
   document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('active', x.id===`p-${t}`));
+  CUR_TAB = t;
+  if(ROUTE_VIEW === 'book' && CURRENT) setHash('book/' + encodeURIComponent(CURRENT) + (t !== 'out' ? '/' + t : ''));
   await ensurePanel(t);
 }
 async function ensurePanel(t){
@@ -828,6 +834,7 @@ function storageEntryVisible(){
 async function openStorage(){
   if(!requireLogin()) return;
   CURRENT = null; CUR_ACTIVE = false; stopProgPoll();
+  ROUTE_VIEW='storage'; setHash('storage');
   $('crumb-book').style.display='none'; $('crumb-sep').style.display='none';
   $('page-title').textContent = '存储 · STORAGE';
   renderNav();
@@ -1040,9 +1047,48 @@ function trendChart(hist){
     </div></div>`;
 }
 
+/* ===== 轻量 URL 路由（hash）：刷新/前进后退保持当前视图 =====
+   视图 ↔ 地址：#/（书库）· #/book/<书名>[/<标签>] · #/storage（存储页）
+   hash 不参与 HTTP 请求（对 Caddy/CF/缓存零影响）；route() 幂等，重复触发直接跳过。 */
+let ROUTE_VIEW = 'lib', CUR_TAB = 'out', _routeReady = false;
+function setHash(h){
+  const t = '#/' + (h || '');
+  if(location.hash !== t) location.hash = t;
+}
+function parseRoute(){
+  const h = (location.hash || '').replace(/^#\/?/, '');
+  if(!h) return {view:'lib'};
+  if(h === 'storage') return {view:'storage'};
+  const m = h.match(/^book\/([^\/]+)(?:\/([a-z]+))?$/);
+  if(m){
+    const tab = m[2] || 'out';
+    if(['out','trans','src','cmp','meta','gloss','img'].indexOf(tab) >= 0){
+      return {view:'book', name:decodeURIComponent(m[1]), tab:tab};
+    }
+  }
+  return {view:'lib'};
+}
+function route(){
+  const r = parseRoute();
+  if(r.view === 'book'){
+    if(ROUTE_VIEW === 'book' && CURRENT === r.name){
+      if(r.tab !== CUR_TAB) switchTab(r.tab);
+      return;
+    }
+    openBook(r.name, r.tab);
+  }else if(r.view === 'storage'){
+    if(ROUTE_VIEW === 'storage') return;
+    openStorage();
+  }else{
+    if(ROUTE_VIEW === 'lib') return;
+    showLibrary();
+  }
+}
+window.addEventListener('hashchange', ()=>{ if(_routeReady) route(); });
+
 /* ===== 启动 ===== */
 updateAuthBadge();
-loadLibrary();
+loadLibrary().then(()=>{ _routeReady = true; route(); });
 loadJobs();
 loadTrash();
 (function(){
