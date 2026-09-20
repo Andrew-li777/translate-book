@@ -164,13 +164,18 @@ function detailStoreLine(b){
              : (Object.keys(r).length ? `R2 ${r.object_count} 个对象 / ${fmt(r.r2_bytes||0)}` : 'R2 读取中/不可用');
   return `<div class="kicker store-line">存储分工 · 本地成品 <b>${fin.length}</b> 个 / <b>${fmt(lb)}</b> ｜ ${rtxt} ${r2Tag(b)}</div>`;
 }
+const FIN_LABELS = {"book.pdf":"PDF","book.docx":"DOCX","book.epub":"EPUB"};
 function renderLibrary(){
   const c = $('content');
   if(!BOOKS.length){ c.innerHTML = storeSummary() + '<div class="empty-hint">暂无藏书 · 等待第一本书入库</div>'; return; }
   c.innerHTML = storeSummary() + '<div class="grid">' + BOOKS.map(b=>{
     const st = statusInfo(b.status);
     const p = progOf(b);
-    const files = Object.entries(b.files||{}).map(([k,v])=>`<span>${k} ${fmt(v)}</span>`).join('');
+    // 卡片脚：只列成品格式（PDF/DOCX/EPUB，与 R2 归档口径一致）+ 尺寸；点芯片直接下载。
+    // 不带 book. 前缀、不列中间文件（output.md/input.md）→ 不再重复显示、不再撑爆版面
+    const files = Object.keys(FIN_LABELS)
+      .filter(k=>b.files && b.files[k]!=null)
+      .map(k=>`<span class="fin" title="点击下载 ${esc(k)}（${fmt(b.files[k])}）" onclick="event.stopPropagation();dlFmt('${esc(b.name)}','${k.slice(5)}')">${FIN_LABELS[k]} ${fmt(b.files[k])}</span>`).join('');
     const bar = p.active ? barHtml(p) : '';
     const pct = p.active ? `<span class="prog-pct${p.pct>=100?' done':''}">${p.total?p.pct+'%':'…'}</span>` : '';
     return `<div class="card${p.active?' card-busy':''}" onclick="openBook('${esc(b.name)}')">
@@ -184,9 +189,7 @@ function renderLibrary(){
         </div>
         ${bar}
       </div>
-      <div class="card-foot">${files||'<span>—</span>'}
-        <span class="dl-btn" onclick="event.stopPropagation();dlFmt('${esc(b.name)}','epub')">EPUB</span>
-      </div></div>`;
+      <div class="card-foot">${files||'<span>—</span>'}</div></div>`;
   }).join('') + '</div>';
   window.scrollTo(0,0);
 }
