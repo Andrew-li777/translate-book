@@ -296,10 +296,10 @@ a{color:inherit;text-decoration:none}
     </div>
     <div class="upload-card" id="jobs-card">
       <div class="nav-head" style="cursor:pointer;margin-bottom:0;border-bottom:none;padding-bottom:0" onclick="toggleJobs()">
-        <span class="kicker" id="jobs-collapse">▾ 任务 · JOBS</span>
+        <span class="kicker" id="jobs-collapse">▸ 任务 · JOBS</span>
         <button onclick="event.stopPropagation();loadJobs()" style="margin-left:auto;border:none;background:none;color:var(--ink-soft);cursor:pointer;font-size:var(--fs-xs)">↻</button>
       </div>
-      <div id="jobs-body">
+      <div id="jobs-body" style="display:none">
         <div class="sel-tools" style="padding-top:6px">
           <label><input type="checkbox" id="sel-all-jobs" onchange="toggleSelAllJobs()"> 全选</label>
           <button class="mini-btn danger" id="btn-del-jobs" onclick="delSelectedJobs()" disabled>删除所选</button>
@@ -398,6 +398,6 @@ a{color:inherit;text-decoration:none}
     </div>
   </div>
 </div>
-<script src="/static/app.js?v=20260920g"></script>
+<script src="/static/app.js?v=20260920h"></script>
 </body>
 </html>
