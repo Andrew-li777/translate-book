@@ -242,7 +242,8 @@ def storage_page(refresh: bool = False) -> dict:
     local_map = {b["name"]: _final_files(b.get("files") or {}) for b in bs}
     local_map = {k: v for k, v in local_map.items() if v}
     if refresh:
-        r2._snap.update({"ts": 0.0, "key": None, "data": None})   # 绕过 30s 缓存
+        r2._snap.update({"ts": 0.0, "key": None, "data": None})   # 绕过 30s 快照缓存
+        r2.objects_all(force=True)                                # 目录列举只强制这一次（snapshot/孤儿扫描共用）
     view = r2.snapshot(local_map)
 
     # ---- 逐书三列 ----
@@ -271,7 +272,7 @@ def storage_page(refresh: bool = False) -> dict:
     # ---- 孤儿对象 ----
     orphans, orphan_bytes = [], 0
     if view["available"]:
-        remote = r2.objects_all(force=refresh) or {}
+        remote = r2.objects_all() or {}   # refresh 时已在上面 force 过一次，这里直接命中同一份
         for book, objs in remote.items():
             if book not in local_map:
                 for rel, size in sorted(objs.items()):

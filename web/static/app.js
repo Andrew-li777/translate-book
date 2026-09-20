@@ -839,7 +839,7 @@ async function openStorage(){
   $('page-title').textContent = '存储 · STORAGE';
   renderNav();
   $('content').innerHTML = '<div class="empty-hint">读取存储状态…</div>';
-  await reloadStorage(true);
+  await reloadStorage(false);      // 入口走 30s 缓存（秒开）；要强制实时用页内「↻ 刷新」
 }
 async function reloadStorage(fresh){
   try{ ST_PAGE = await api('/api/storage' + (fresh ? '?refresh=1' : '')); }

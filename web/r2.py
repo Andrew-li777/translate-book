@@ -222,6 +222,7 @@ def objects_all(force: bool = False):
     未配置 / 读不到 → None（调用方须区分「空桶」与「不可用」）。
     只打一次 R2；fast 客户端（短超时、不重试）。
     P1-3：结果 30s 内复用（失败不缓存）；force=True 强制刷新——GC 删前复核必须用。
+    2026-09-20（存储页提速）：snapshot 与存储页孤儿扫描共用本缓存 → 每次进页/刷新只列举一次。
     """
     import time as _t
     now = _t.time()
@@ -288,23 +289,14 @@ def snapshot(local_map: dict) -> dict:
             "totals": {"local_files": 0, "local_bytes": 0, "r2_objects": 0, "r2_bytes": 0, "diff_items": 0},
             "cached": False, "age_s": 0}
 
-    # ---- 一次性拉取全部对象，按 books/{书名}/ 分组 ----
+    # ---- 拉取全部对象（复用 objects_all 的 30s 缓存：快照与孤儿扫描共用一次列举；
+    #      需要强制刷新时由调用方先 objects_all(force=True) 一次即可）----
     remote_by_book = {}
     if configured:
-        s3, bucket = _client(fast=True)
-        if s3 is not None:
-            try:
-                prefix = R2_PREFIX + "/"
-                paginator = s3.get_paginator("list_objects_v2")
-                for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-                    for o in page.get("Contents", []):
-                        rest = o["Key"][len(prefix):]
-                        book, _, rel = rest.partition("/")
-                        if rel:
-                            remote_by_book.setdefault(book, {})[rel] = o["Size"]
-                view["available"] = True
-            except Exception as e:
-                log.warning("列举 R2 对象失败: %s", e)
+        remote = objects_all()
+        if remote is not None:
+            remote_by_book = remote
+            view["available"] = True
 
     for book, files in local_map.items():
         local_bytes = sum(files.values())
