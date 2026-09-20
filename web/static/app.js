@@ -362,7 +362,7 @@ function loadDocPreview(name){
   if(!slot) return;
   // P2-2：书已同步且开关开启 → iframe 直连 R2（同步时已注入懒加载）；否则走本地渲染管线
   const src = (CUR_B && CUR_B.preview_base)
-    ? `${CUR_B.preview_base}/books/${name}/book.html`
+    ? `${CUR_B.preview_base}/books/${name}/book.html?pv=20260920b`
     : `/api/books/${name}/file/book.html?raw=1`;
   slot.innerHTML = `<iframe class="doc-preview" src="${src}"></iframe>`;
 }

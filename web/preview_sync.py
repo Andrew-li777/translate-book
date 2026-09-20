@@ -36,6 +36,10 @@ from config import WORK_ROOT   # noqa: E402
 STATE_FP = WORK_ROOT / ".preview_sync_state.json"
 DEFAULT_BUCKET = "translate-preview"
 _LAZY_IMG_RE = re.compile(r"<img(?![^>]*\bloading=)", re.I)
+# 内容级修订标记（2026-09-20b）：改变 prepared 内容 → 改变远端 ETag。
+# 背景：只修元数据(Content-Type)不改内容时 ETag 不变，已缓存「坏响应」的浏览器
+# 重新校验会命中 304，粘着旧副本（无类型头）继续按源码渲染 → 换 ETag 强制其全量刷新。
+_PREPARED_REV = "<!-- psync rev:20260920b -->"
 
 
 def _cred() -> tuple:
@@ -115,6 +119,7 @@ def _prepared(rel: str, book_dir: Path, tmpdir: Path) -> Path:
     if rel == "book.html":
         t = src.read_text(encoding="utf-8", errors="replace")
         t = _LAZY_IMG_RE.sub('<img loading="lazy"', t)
+        t = t.rstrip() + "\n" + _PREPARED_REV + "\n"
         out = tmpdir / "book.html"
         out.write_text(t, encoding="utf-8")
         return out
@@ -155,8 +160,12 @@ def sync_book(s3, bucket: str, name: str, tmpdir: Path) -> bool:
         total = len(pending)
         for i, (rel, fp, key) in enumerate(pending, 1):
             t0 = time.time()
+            extra = {"ContentType": r2.content_type_for(rel)}
+            if rel.lower().endswith((".html", ".md")):
+                # 内容随重译变化：要求每次校验（304 也会带类型头，不会粘掉）
+                extra["CacheControl"] = "no-cache"
             s3.upload_file(str(fp), bucket, key,
-                           ExtraArgs={"ContentType": r2.content_type_for(rel)},
+                           ExtraArgs=extra,
                            Config=r2._UPLOAD_CFG)
             print("  [%d/%d] %s  %.0fKB  %.1fs" % (i, total, rel, fp.stat().st_size / 1024, time.time() - t0))
         bad = [k for _, fp, k in pending if not _head_match(s3, bucket, k, fp)]
