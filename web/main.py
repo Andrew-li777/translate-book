@@ -76,6 +76,50 @@ def index():
     return (_STATIC / "index.html").read_text(encoding="utf-8")
 
 
+# ── SEO / 爬虫入口（2026-09-21 补）
+# 此前 /robots.txt、/sitemap.xml 对游客 403（白名单漏项），等于把爬虫拒之门外；
+# /favicon.ico 缺失返回 404。三者均为静态文本，无副作用、无鉴权敏感面。
+_TRS_ORIGIN = "https://trs.andrew-li.top"
+
+
+@app.get("/robots.txt")
+def robots_txt():
+    return Response(
+        content=(
+            "User-agent: *\n"
+            "Allow: /\n"
+            "Disallow: /api/\n"
+            "\n"
+            f"Sitemap: {_TRS_ORIGIN}/sitemap.xml\n"
+        ),
+        media_type="text/plain; charset=utf-8",
+    )
+
+
+@app.get("/sitemap.xml")
+def sitemap_xml():
+    return Response(
+        content=(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+            "  <url>\n"
+            f"    <loc>{_TRS_ORIGIN}/</loc>\n"
+            f"    <lastmod>{time.strftime('%Y-%m-%d')}</lastmod>\n"
+            "    <changefreq>weekly</changefreq>\n"
+            "    <priority>1.0</priority>\n"
+            "  </url>\n"
+            "</urlset>\n"
+        ),
+        media_type="application/xml; charset=utf-8",
+    )
+
+
+@app.get("/favicon.ico")
+def favicon_ico():
+    # SPA 无独立 ico；用同一枚 SVG 顶掉 404 噪音（浏览器优先读 <link rel="icon">）
+    return FileResponse(str(_STATIC / "favicon.svg"), media_type="image/svg+xml")
+
+
 @app.get("/api/books")
 def api_books():
     books.ensure_work_root()

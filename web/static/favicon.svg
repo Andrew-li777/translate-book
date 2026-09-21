@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="翻译文库">
+  <rect width="64" height="64" rx="12" fill="#FAF7F2"/>
+  <rect x="0.5" y="0.5" width="63" height="63" rx="11.5" fill="none" stroke="#E5E0D5" stroke-width="1"/>
+  <g fill="none" stroke="#1C1B18" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M13 17h13v30H13z"/>
+    <path d="M17 25h5M17 31h5M17 37h5"/>
+  </g>
+  <g fill="none" stroke="#A16207" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M33 32h15"/>
+    <path d="M43 26l6 6-6 6"/>
+  </g>
+</svg>

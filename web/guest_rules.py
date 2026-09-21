@@ -73,6 +73,6 @@ def guest_read_allowed(method: str, path: str) -> bool:
         return True
     if p.startswith("/static/"):
         return True
-    if p in ("/", "/favicon.ico"):
+    if p in ("/", "/favicon.ico", "/robots.txt", "/sitemap.xml"):
         return True
     return False
